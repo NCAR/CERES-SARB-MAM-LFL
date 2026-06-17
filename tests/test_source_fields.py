@@ -59,6 +59,17 @@ class TestSourceFields(unittest.TestCase):
         self.assertEqual(fields.dims, ("time", "lev", "lat", "lon"))
         self.assertEqual(set(fields.coords), {"time", "lev", "lat", "lon"})
 
+    def test_preserves_xarray_coordinate_metadata(self):
+        ds = self.native_dataset()
+        ds.coords["lat"].attrs["units"] = "degrees_north"
+
+        fields = read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+
+        self.assertIsInstance(fields.coords["lat"], xr.DataArray)
+        self.assertEqual(fields.coords["lat"].dims, ("lat",))
+        self.assertEqual(fields.coords["lat"].attrs["units"], "degrees_north")
+        np.testing.assert_allclose(fields.coords["lat"].values, ds.coords["lat"].values)
+
     def test_temperature_falls_back_to_freezing(self):
         ds = self.native_dataset(include_temperature=False)
 

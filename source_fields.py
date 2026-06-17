@@ -54,7 +54,7 @@ def read_source_fields_from_dataset(ds, source_spec, species_names):
             continue
         species[species_name] = _read_required_variable(ds, varname)
 
-    coords = {name: np.asarray(coord.values) for name, coord in ds.coords.items()}
+    coords = {name: ds.coords[name] for name in ds.coords}
     dims = tuple(ds[rh_var].dims)
 
     return SourceFields(
