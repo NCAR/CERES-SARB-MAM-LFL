@@ -1,9 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import xarray as xr
 
-from source_fields import read_source_fields_from_dataset
+from source_fields import open_source_fields, read_source_fields_from_dataset
 
 
 class TestSourceFields(unittest.TestCase):
@@ -70,6 +71,15 @@ class TestSourceFields(unittest.TestCase):
         self.assertEqual(fields.coords["lat"].attrs["units"], "degrees_north")
         np.testing.assert_allclose(fields.coords["lat"].values, ds.coords["lat"].values)
 
+    def test_copied_coords_do_not_mutate_original_attrs(self):
+        ds = self.native_dataset()
+        ds.coords["lat"].attrs["units"] = "degrees_north"
+
+        fields = read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+        fields.coords["lat"].attrs["units"] = "changed"
+
+        self.assertEqual(ds.coords["lat"].attrs["units"], "degrees_north")
+
     def test_temperature_falls_back_to_freezing(self):
         ds = self.native_dataset(include_temperature=False)
 
@@ -82,6 +92,53 @@ class TestSourceFields(unittest.TestCase):
 
         with self.assertRaisesRegex(KeyError, "DELP"):
             read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+
+    def test_delp_shape_mismatch_raises_value_error(self):
+        ds = self.native_dataset()
+        ds["DELP"] = (("time", "lev", "lat"), np.full((1, 2, 2), 100.0, dtype=np.float32))
+
+        with self.assertRaisesRegex(ValueError, "DELP"):
+            read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+
+    def test_species_reordered_dims_raises_value_error(self):
+        ds = self.native_dataset()
+        ds["SO4"] = (("time", "lev", "lon", "lat"), np.full((1, 2, 3, 2), 1.0e-9, dtype=np.float32))
+
+        with self.assertRaisesRegex(ValueError, "SO4"):
+            read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+
+    def test_mapped_missing_species_raises_key_error(self):
+        ds = self.native_dataset().drop_vars("BCPHILIC")
+
+        with self.assertRaisesRegex(KeyError, "BCPHILIC"):
+            read_source_fields_from_dataset(ds, self.source_spec(), ["BCPHILIC"])
+
+    def test_open_source_fields_loads_and_closes_dataset(self):
+        class TrackingDataset:
+            def __init__(self, dataset):
+                self.dataset = dataset
+                self.loaded = False
+                self.closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                self.closed = True
+
+            def load(self):
+                self.loaded = True
+                return self.dataset.load()
+
+        tracking = TrackingDataset(self.native_dataset())
+
+        with patch("source_fields.xr.open_dataset", return_value=tracking) as open_dataset:
+            fields = open_source_fields("native.nc", self.source_spec(), ["SO4"])
+
+        open_dataset.assert_called_once_with("native.nc")
+        self.assertTrue(tracking.loaded)
+        self.assertTrue(tracking.closed)
+        self.assertEqual(fields.rh.shape, (1, 2, 2, 3))
 
 
 if __name__ == "__main__":
