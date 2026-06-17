@@ -69,6 +69,35 @@ class TestVisCorrection(unittest.TestCase):
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(stats["capped"], 0)
 
+    def test_compute_factor_rejects_mismatched_dims(self):
+        external = xr.DataArray(np.ones((2, 3), dtype=np.float32), dims=("lat", "lon"))
+        internal = xr.DataArray(np.ones((2, 3), dtype=np.float32), dims=("y", "x"))
+
+        with self.assertRaisesRegex(ValueError, "dims"):
+            compute_vis_factor(external, internal)
+
+    def test_compute_factor_rejects_non_2d_inputs(self):
+        external = xr.DataArray(np.ones((1, 2, 3), dtype=np.float32), dims=("time", "lat", "lon"))
+        internal = xr.DataArray(np.ones((1, 2, 3), dtype=np.float32), dims=("time", "lat", "lon"))
+
+        with self.assertRaisesRegex(ValueError, "2D"):
+            compute_vis_factor(external, internal)
+
+    def test_compute_factor_treats_non_finite_values_as_no_correction(self):
+        external = xr.DataArray(
+            np.array([[np.nan, np.inf, 1.0, 0.0]], dtype=np.float32),
+            dims=("lat", "lon"),
+        )
+        internal = xr.DataArray(
+            np.array([[1.0, 0.1, np.nan, 0.0]], dtype=np.float32),
+            dims=("lat", "lon"),
+        )
+
+        factor, stats = compute_vis_factor(external, internal, min_factor=0.25, max_factor=4.0)
+
+        np.testing.assert_allclose(factor.values, np.array([[1.0, 1.0, 1.0, 1.0]], dtype=np.float32))
+        self.assertEqual(stats, {"capped": 0, "skipped": 1})
+
     def test_apply_column_factor_scales_every_layer_and_preserves_column_scaling(self):
         layer = xr.DataArray(
             np.array(
@@ -107,9 +136,15 @@ class TestVisCorrection(unittest.TestCase):
             },
         )
         factor = xr.DataArray(
-            np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
-            dims=("lat", "lon"),
-            coords={"lat": layer.coords["lat"], "lon": layer.coords["lon"]},
+            np.array(
+                [
+                    [[1.0, 2.0], [3.0, 4.0]],
+                    [[5.0, 6.0], [7.0, 8.0]],
+                ],
+                dtype=np.float32,
+            ),
+            dims=("time", "lat", "lon"),
+            coords={"time": layer.coords["time"], "lat": layer.coords["lat"], "lon": layer.coords["lon"]},
         )
 
         scaled = apply_column_factor(layer, factor)
@@ -123,6 +158,20 @@ class TestVisCorrection(unittest.TestCase):
         factor = xr.DataArray(np.ones((2, 2), dtype=np.float32), dims=("lat", "lon"))
 
         with self.assertRaisesRegex(ValueError, "lev"):
+            apply_column_factor(layer, factor)
+
+    def test_apply_column_factor_rejects_factor_with_extra_band_dim(self):
+        layer = xr.DataArray(np.ones((2, 2, 2), dtype=np.float32), dims=("lev", "lat", "lon"))
+        factor = xr.DataArray(np.ones((3, 2, 2), dtype=np.float32), dims=("band", "lat", "lon"))
+
+        with self.assertRaisesRegex(ValueError, "dims"):
+            apply_column_factor(layer, factor)
+
+    def test_apply_column_factor_rejects_factor_containing_lev(self):
+        layer = xr.DataArray(np.ones((2, 2, 2), dtype=np.float32), dims=("lev", "lat", "lon"))
+        factor = xr.DataArray(np.ones((2, 2, 2), dtype=np.float32), dims=("lev", "lat", "lon"))
+
+        with self.assertRaisesRegex(ValueError, "dims"):
             apply_column_factor(layer, factor)
 
 
