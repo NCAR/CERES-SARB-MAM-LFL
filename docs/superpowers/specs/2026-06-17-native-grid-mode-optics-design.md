@@ -77,8 +77,19 @@ For each source, date, scheme, mode, and band:
    extinction, absorption, asymmetry, and layer optical depths.
 
 Mode number concentration is derived from dry volume and the configured
-lognormal dry radius/sigma. Wet radius is derived from mixed hygroscopicity and
-RH, not from a source-provided wet mode radius.
+lognormal dry radius/sigma. Wet radius is derived from mixed hygroscopicity, RH,
+and temperature through the full Kohler equation, not from a source-provided wet
+mode radius. Temperature is read from the source file when available and falls
+back to `273.15 K` when absent.
+
+Kohler water uptake solves:
+
+`log(RH) = A / r_w - B * r_d^3 / (r_w^3 - r_d^3)`
+
+where `A = 2 M_w sigma / (R T rho_w)`, `B` is the mixed hygroscopicity, `r_d` is
+dry radius, and `r_w >= r_d` is the solved wet radius. The implementation must
+use a bounded numeric solve and fall back to `r_w = r_d` for dry or
+non-hygroscopic cells.
 
 ## VIS Correction
 

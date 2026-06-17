@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a native-grid GEOSIT/MERRA2 mode-internal aerosol optics path with YAML-defined MAM mixing state, VIS column preservation, and mode-summed AER output.
+**Goal:** Build a native-grid GEOSIT/MERRA2 mode-internal aerosol optics path with YAML-defined MAM mixing state, Kohler water uptake, VIS column preservation, and mode-summed AER output.
 
 **Architecture:** Add small helper modules around the existing `microphysics.py` kernels. `mode_optics.py` reads source-native fields, allocates species to one mode, computes uncorrected mode optical depths, applies a VIS-derived column correction, and writes SARB-style mode files. `mode_external_mix.py` sums corrected mode files into scheme-level totals.
 
@@ -275,6 +275,7 @@ Sources:
             lon: lon
         fields:
             rh: RH
+            temperature: T
             delp: DELP
             ps: PS
         species:
@@ -307,6 +308,7 @@ Sources:
             lon: lon
         fields:
             rh: RH
+            temperature: T
             delp: DELP
             ps: PS
         species:
@@ -416,22 +418,36 @@ class TestSourceFields(unittest.TestCase):
         ds = xr.Dataset(
             {
                 "RH": (("time", "lev", "lat", "lon"), np.full((1, 2, 2, 3), 0.5, dtype=np.float32)),
+                "T": (("time", "lev", "lat", "lon"), np.full((1, 2, 2, 3), 280.0, dtype=np.float32)),
                 "DELP": (("time", "lev", "lat", "lon"), np.full((1, 2, 2, 3), 100.0, dtype=np.float32)),
                 "SO4": (("time", "lev", "lat", "lon"), np.full((1, 2, 2, 3), 1.0e-9, dtype=np.float32)),
                 "BCPHILIC": (("time", "lev", "lat", "lon"), np.full((1, 2, 2, 3), 2.0e-10, dtype=np.float32)),
             },
             coords={"time": [0], "lev": [1, 2], "lat": [-1.0, 1.0], "lon": [0.0, 1.25, 2.5]},
         )
-        spec = {"fields": {"rh": "RH", "delp": "DELP"}, "species": {"SO4": "SO4", "BCPHILIC": "BCPHILIC"}}
+        spec = {"fields": {"rh": "RH", "temperature": "T", "delp": "DELP"}, "species": {"SO4": "SO4", "BCPHILIC": "BCPHILIC"}}
         fields = read_source_fields_from_dataset(ds, spec, ["SO4", "BCPHILIC"])
         self.assertEqual(fields.rh.shape, (1, 2, 2, 3))
+        self.assertAlmostEqual(float(fields.temperature.mean()), 280.0)
         self.assertEqual(fields.delp.shape, (1, 2, 2, 3))
         self.assertIn("SO4", fields.species)
         self.assertIn("BCPHILIC", fields.species)
 
+    def test_temperature_falls_back_to_freezing(self):
+        ds = xr.Dataset(
+            {
+                "RH": (("time", "lev", "lat", "lon"), np.ones((1, 1, 1, 1), dtype=np.float32)),
+                "DELP": (("time", "lev", "lat", "lon"), np.ones((1, 1, 1, 1), dtype=np.float32)),
+                "SO4": (("time", "lev", "lat", "lon"), np.ones((1, 1, 1, 1), dtype=np.float32)),
+            }
+        )
+        spec = {"fields": {"rh": "RH", "temperature": "T", "delp": "DELP"}, "species": {"SO4": "SO4"}}
+        fields = read_source_fields_from_dataset(ds, spec, ["SO4"])
+        self.assertAlmostEqual(float(fields.temperature[0, 0, 0, 0]), 273.15)
+
     def test_missing_required_variable_raises(self):
         ds = xr.Dataset({"RH": (("time", "lev", "lat", "lon"), np.ones((1, 1, 1, 1), dtype=np.float32))})
-        spec = {"fields": {"rh": "RH", "delp": "DELP"}, "species": {"SO4": "SO4"}}
+        spec = {"fields": {"rh": "RH", "temperature": "T", "delp": "DELP"}, "species": {"SO4": "SO4"}}
         with self.assertRaisesRegex(KeyError, "DELP"):
             read_source_fields_from_dataset(ds, spec, ["SO4"])
 
@@ -464,6 +480,7 @@ import xarray as xr
 class SourceFields:
     dataset: xr.Dataset
     rh: np.ndarray
+    temperature: np.ndarray
     delp: np.ndarray
     species: dict
     coords: dict
@@ -479,6 +496,11 @@ def _require_var(ds, name):
 def read_source_fields_from_dataset(ds, source_spec, species_names):
     field_spec = source_spec["fields"]
     rh = _require_var(ds, field_spec["rh"]).values.astype(np.float32)
+    temperature_name = field_spec.get("temperature")
+    if temperature_name is not None and temperature_name in ds:
+        temperature = ds[temperature_name].values.astype(np.float32)
+    else:
+        temperature = np.full_like(rh, 273.15, dtype=np.float32)
     delp = _require_var(ds, field_spec["delp"]).values.astype(np.float32)
     species = {}
     for species_name in species_names:
@@ -491,6 +513,7 @@ def read_source_fields_from_dataset(ds, source_spec, species_names):
     return SourceFields(
         dataset=ds,
         rh=rh,
+        temperature=temperature,
         delp=delp,
         species=species,
         coords=coords,
@@ -511,7 +534,7 @@ Run:
 python -m unittest tests.test_source_fields -v
 ```
 
-Expected: PASS, 2 tests.
+Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -536,7 +559,7 @@ Create `tests/test_mode_physics.py`:
 import unittest
 import numpy as np
 
-from mode_physics import derive_number_mixing_ratio, mix_mode_state
+from mode_physics import derive_number_mixing_ratio, kohler_wet_radius_um, mix_mode_state
 
 
 class TestModePhysics(unittest.TestCase):
@@ -556,9 +579,23 @@ class TestModePhysics(unittest.TestCase):
             "BC": {"density": 1.0, "hygroscopicity": [0.0, 0.0, 0.0]},
         }
         refractive = {"SO4": (1.4, 0.0), "BC": (1.8, 0.4), "WAT": (1.33, 0.0)}
-        state = mix_mode_state(species_info, q, refractive, np.full((1, 1, 1, 1), 0.5), 0.05)
+        temperature = np.full((1, 1, 1, 1), 280.0, dtype=np.float32)
+        state = mix_mode_state(species_info, q, refractive, np.full((1, 1, 1, 1), 0.5), temperature, 0.05)
         self.assertAlmostEqual(float(state["n_re"][0, 0, 0, 0]), 1.6, places=5)
         self.assertGreaterEqual(float(state["r_w_um"][0, 0, 0, 0]), 0.05)
+
+    def test_kohler_wet_radius_solves_equation(self):
+        rh = np.array([0.80], dtype=np.float32)
+        temperature = np.array([280.0], dtype=np.float32)
+        dry_radius_um = 0.05
+        b = np.array([1.0], dtype=np.float32)
+        wet = kohler_wet_radius_um(dry_radius_um, b, rh, temperature)
+        self.assertGreater(float(wet[0]), dry_radius_um)
+        dry_m = dry_radius_um * 1.0e-6
+        wet_m = wet[0] * 1.0e-6
+        a = 2.0 * 18.016 * 0.076 / (8.3143e3 * 1000.0 * temperature[0])
+        residual = np.log(rh[0]) - (a / wet_m - b[0] * dry_m ** 3 / (wet_m ** 3 - dry_m ** 3))
+        self.assertAlmostEqual(float(residual), 0.0, places=4)
 
 
 if __name__ == "__main__":
@@ -623,17 +660,37 @@ def _mixed_hygroscopicity(species_info, q, rh):
     return np.divide(numerator, denominator, out=np.zeros_like(rh, dtype=np.float32), where=denominator > 0.0)
 
 
-def _wet_radius_um(dry_radius_um, hygroscopicity, rh):
-    rh_clip = np.clip(rh, 1.0e-6, 0.99)
-    growth = np.maximum(1.0 - hygroscopicity / np.log(rh_clip), 1.0)
-    return (float(dry_radius_um) * growth ** (1.0 / 3.0)).astype(np.float32)
+def kohler_wet_radius_um(dry_radius_um, hygroscopicity, rh, temperature):
+    dry_radius_m = float(dry_radius_um) * 1.0e-6
+    rh_clip = np.clip(rh.astype(np.float64), 1.0e-6, 0.99)
+    b = np.maximum(hygroscopicity.astype(np.float64), 0.0)
+    temp = np.clip(temperature.astype(np.float64), 180.0, 330.0)
+    wet = np.full(rh.shape, dry_radius_m, dtype=np.float64)
+    active = (rh_clip > 1.0e-6) & (b > 0.0)
+    if not np.any(active):
+        return (wet * 1.0e6).astype(np.float32)
+    m_w = 18.016
+    sigma = 0.076
+    rho_w = 1000.0
+    gas_r = 8.3143e3
+    a = 2.0 * m_w * sigma / (gas_r * rho_w * temp)
+    low = np.full(rh.shape, dry_radius_m * (1.0 + 1.0e-8), dtype=np.float64)
+    high = dry_radius_m * np.maximum(2.0, (1.0 - b / np.log(rh_clip)) ** (1.0 / 3.0) * 2.0)
+    log_rh = np.log(rh_clip)
+    for _ in range(80):
+        mid = 0.5 * (low + high)
+        f_mid = a / mid - b * dry_radius_m ** 3 / (mid ** 3 - dry_radius_m ** 3) - log_rh
+        high = np.where((f_mid > 0.0) & active, mid, high)
+        low = np.where((f_mid <= 0.0) & active, mid, low)
+    wet = np.where(active, 0.5 * (low + high), dry_radius_m)
+    return (wet * 1.0e6).astype(np.float32)
 
 
-def mix_mode_state(species_info, q, refractive, rh, dry_radius_um):
+def mix_mode_state(species_info, q, refractive, rh, temperature, dry_radius_um):
     shape = rh.shape
     dry_volume = _dry_volume(species_info, q)
     hygroscopicity = _mixed_hygroscopicity(species_info, q, rh.astype(np.float32))
-    r_w_um = _wet_radius_um(dry_radius_um, hygroscopicity, rh.astype(np.float32))
+    r_w_um = kohler_wet_radius_um(dry_radius_um, hygroscopicity, rh.astype(np.float32), temperature.astype(np.float32))
     n_re_num = np.zeros(shape, dtype=np.float32)
     n_im_num = np.zeros(shape, dtype=np.float32)
     dry_volume_cm = np.zeros(shape, dtype=np.float32)
@@ -1292,7 +1349,7 @@ In `mode_optics.py`, replace the `print(f"read {input_path}")` line in `run` wit
         q = {name: fields.species[name] * float(allocations[name][args.mode]) for name in species}
         species_info = _species_info(config, q.keys())
         refractive = _refractive_indices(config, q.keys(), wavelength_um)
-        state = mix_mode_state(species_info, q, refractive, fields.rh, mode_spec["dry_radius_um"])
+        state = mix_mode_state(species_info, q, refractive, fields.rh, fields.temperature, mode_spec["dry_radius_um"])
         number = derive_number_mixing_ratio(state["dry_volume"], mode_spec["dry_radius_um"], mode_spec["sigma_g"])
         ext_um2, abs_um2, asm = lookup_mode_optics(state["n_re"], state["n_im"], state["r_w_um"], ds_table)
         tau_ext = layer_optical_depth(fields.delp, number, ext_um2)
