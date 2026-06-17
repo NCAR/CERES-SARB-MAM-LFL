@@ -40,6 +40,15 @@ def _validate_like(reference_da, candidate_da, name):
         )
 
 
+def _validate_reference_dims(reference_da, source_spec, name):
+    dims_spec = source_spec.get("dims")
+    if not dims_spec:
+        return
+    expected = tuple(dims_spec[key] for key in ("time", "lev", "lat", "lon") if key in dims_spec)
+    if reference_da.dims != expected:
+        raise ValueError("%s dims %s do not match expected dims %s" % (name, reference_da.dims, expected))
+
+
 def _required_field_name(source_spec, field_name):
     fields = source_spec.get("fields", {})
     if field_name not in fields:
@@ -52,6 +61,7 @@ def read_source_fields_from_dataset(ds, source_spec, species_names):
     delp_var = _required_field_name(source_spec, "delp")
 
     rh_da = _require_var(ds, rh_var)
+    _validate_reference_dims(rh_da, source_spec, rh_var)
     delp_da = _require_var(ds, delp_var)
     _validate_like(rh_da, delp_da, delp_var)
 

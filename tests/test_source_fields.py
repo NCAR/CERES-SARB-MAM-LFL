@@ -41,6 +41,33 @@ class TestSourceFields(unittest.TestCase):
             },
         }
 
+    def source_spec_with_dims(self):
+        spec = self.source_spec()
+        spec["dims"] = {
+            "time": "time",
+            "lev": "lev",
+            "lat": "lat",
+            "lon": "lon",
+        }
+        return spec
+
+    def reordered_dataset(self):
+        dims = ("time", "lat", "lev", "lon")
+        shape = (1, 2, 2, 3)
+        coords = {
+            "time": np.array([0]),
+            "lat": np.array([-10.0, 10.0], dtype=np.float32),
+            "lev": np.array([1000.0, 900.0], dtype=np.float32),
+            "lon": np.array([0.0, 120.0, 240.0], dtype=np.float32),
+        }
+        data_vars = {
+            "RH": (dims, np.linspace(0.1, 0.9, num=np.prod(shape), dtype=np.float32).reshape(shape)),
+            "T": (dims, np.full(shape, 280.0, dtype=np.float32)),
+            "DELP": (dims, np.full(shape, 100.0, dtype=np.float32)),
+            "SO4": (dims, np.full(shape, 1.0e-9, dtype=np.float32)),
+        }
+        return xr.Dataset(data_vars=data_vars, coords=coords)
+
     def test_reads_native_fields_and_species(self):
         ds = self.native_dataset()
 
@@ -106,6 +133,12 @@ class TestSourceFields(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "SO4"):
             read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
+
+    def test_rh_reordered_dims_raise_when_source_spec_dims_provided(self):
+        ds = self.reordered_dataset()
+
+        with self.assertRaisesRegex(ValueError, "RH"):
+            read_source_fields_from_dataset(ds, self.source_spec_with_dims(), ["SO4"])
 
     def test_mapped_missing_species_raises_key_error(self):
         ds = self.native_dataset().drop_vars("BCPHILIC")
