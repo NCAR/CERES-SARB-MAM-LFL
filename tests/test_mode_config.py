@@ -86,14 +86,73 @@ class TestModeConfig(unittest.TestCase):
 
 
 class TestYamlSchema(unittest.TestCase):
-    def test_aerosol_yaml_has_sources_and_schemes(self):
-        config = load_config("aerosol.yaml")
+    REQUIRED_FIELDS = {"rh", "temperature", "delp", "ps"}
+    REQUIRED_MODES = {"a1", "a2", "a3", "a4"}
+    REQUIRED_SIZE_BINS = {"NO3AN", "SS", "DU"}
+
+    def assert_native_grid_schema(self, config):
         self.assertIn("Sources", config)
         self.assertIn("Schemes", config)
         self.assertIn("GEOSIT", config["Sources"])
         self.assertIn("MERRA2", config["Sources"])
+
+        for source_name in ("GEOSIT", "MERRA2"):
+            source = config["Sources"][source_name]
+            self.assertIn("fields", source)
+            fields = source["fields"]
+            self.assertLessEqual(self.REQUIRED_FIELDS, set(fields))
+
         self.assertIn("MAM4", config["Schemes"])
-        self.assertIn("allocations", config["Schemes"]["MAM4"])
+        scheme = config["Schemes"]["MAM4"]
+        self.assertIn("allocations", scheme)
+        self.assertIn("modes", scheme)
+        self.assertIn("size_bins", scheme)
+        self.assertLessEqual(self.REQUIRED_MODES, set(scheme["modes"]))
+        self.assertLessEqual(self.REQUIRED_SIZE_BINS, set(scheme["size_bins"]))
+
+        for bin_name in self.REQUIRED_SIZE_BINS:
+            size_bin = scheme["size_bins"][bin_name]
+            self.assertIn("species", size_bin)
+            self.assertIn("radii_um", size_bin)
+            self.assertEqual(len(size_bin["species"]), len(size_bin["radii_um"]))
+
+    def config_strings(self, value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from self.config_strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from self.config_strings(item)
+
+    def test_aerosol_yaml_has_sources_and_schemes(self):
+        config = load_config("aerosol.yaml")
+        self.assert_native_grid_schema(config)
+
+    def test_aerosol_ceres_yaml_has_sources_and_schemes(self):
+        config = load_config("aerosol_ceres.yaml")
+        self.assert_native_grid_schema(config)
+
+    def test_aerosol_ceres_yaml_has_required_paths(self):
+        config = load_config("aerosol_ceres.yaml")
+        sources = config["Sources"]
+        modes = config["Schemes"]["MAM4"]["modes"]
+
+        self.assertIn("GEOSIT_alpha_4/", sources["GEOSIT"]["output_pattern"])
+        self.assertIn("GEOSIT_alpha_4/", sources["GEOSIT"]["external_vis_pattern"])
+        self.assertEqual(
+            sources["MERRA2"]["input_pattern"],
+            "/CERES_prd/GMAO/MERRA2/YYYY/MM/MERRA2_300.inst3_3d_aer_Nv.YYYYMMDD.nc4",
+        )
+        self.assertIn("/CERES/sarb/dfillmor", sources["MERRA2"]["output_pattern"])
+        self.assertIn("/CERES/sarb/dfillmor", sources["MERRA2"]["external_vis_pattern"])
+        for mode in modes.values():
+            self.assertIn("/CERES/sarb/dfillmor", mode["filename_sarb"])
+
+        config_strings = list(self.config_strings(config))
+        self.assertTrue(any("/CERES/sarb/dfillmor" in value for value in config_strings))
+        self.assertFalse(any("dfillmore" in value for value in config_strings))
 
 
 if __name__ == "__main__":
