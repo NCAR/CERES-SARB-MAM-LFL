@@ -11,7 +11,7 @@ def compute_vis_factor(
 ):
     external_column, internal_column = xr.align(external_column, internal_column, join="exact", copy=False)
 
-    tiny = (external_column < min_aod) & (internal_column < min_aod)
+    tiny = (external_column <= min_aod) & (internal_column <= min_aod)
     with np.errstate(divide="ignore", invalid="ignore"):
         raw = external_column / internal_column
     raw = xr.where(internal_column > 0.0, raw, np.inf)

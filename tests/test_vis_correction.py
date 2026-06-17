@@ -58,6 +58,17 @@ class TestVisCorrection(unittest.TestCase):
         self.assertEqual(stats["capped"], 3)
         self.assertEqual(stats["skipped"], 1)
 
+    def test_compute_factor_skips_columns_equal_to_tiny_threshold(self):
+        min_aod = 1.0e-8
+        external = xr.DataArray(np.array([[min_aod]], dtype=np.float32), dims=("lat", "lon"))
+        internal = xr.DataArray(np.array([[min_aod]], dtype=np.float32), dims=("lat", "lon"))
+
+        factor, stats = compute_vis_factor(external, internal, min_aod=min_aod)
+
+        self.assertAlmostEqual(float(factor.values[0, 0]), 1.0)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(stats["capped"], 0)
+
     def test_apply_column_factor_scales_every_layer_and_preserves_column_scaling(self):
         layer = xr.DataArray(
             np.array(
