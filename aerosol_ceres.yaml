@@ -134,3 +134,111 @@ Mixtures:
     Maritime:
         SS: 0.8
         SU: 0.2
+
+Sources:
+    GEOSIT:
+        input_pattern: GEOSIT/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.YYYY-MM-DDTHH00.V01.nc4
+        output_pattern: GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.{label}_{band}.YYYY-MM-DDTHH00.V01.nc4
+        external_vis_pattern: GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.AER_550NM.YYYY-MM-DDTHH00.V01.nc4
+        dims:
+            time: time
+            lev: lev
+            lat: lat
+            lon: lon
+        fields:
+            rh: RH
+            temperature: T
+            delp: DELP
+            ps: PS
+        species:
+            SO4: SO4
+            OCPHOBIC: OCPHOBIC
+            OCPHILIC: OCPHILIC
+            BCPHOBIC: BCPHOBIC
+            BCPHILIC: BCPHILIC
+            NO3AN1: NO3AN1
+            NO3AN2: NO3AN2
+            NO3AN3: NO3AN3
+            SS001: SS001
+            SS002: SS002
+            SS003: SS003
+            SS004: SS004
+            SS005: SS005
+            DU001: DU001
+            DU002: DU002
+            DU003: DU003
+            DU004: DU004
+            DU005: DU005
+    MERRA2:
+        input_pattern: /CERES_prd/GMAO/MERRA2/YYYY/MM/MERRA2_300.inst3_3d_aer_Nv.YYYYMMDD.nc4
+        output_pattern: /CERES/sarb/dfillmor/MERRA2/YYYY/MM/MERRA2_300.inst3_3d_aer_Nv.{label}_{band}.YYYYMMDDTHH.nc4
+        external_vis_pattern: /CERES/sarb/dfillmor/MERRA2/YYYY/MM/MERRA2_300.inst3_3d_aer_Nv.AER_550NM.YYYYMMDDTHH.nc4
+        dims:
+            time: time
+            lev: lev
+            lat: lat
+            lon: lon
+        fields:
+            rh: RH
+            temperature: T
+            delp: DELP
+            ps: PS
+        species:
+            SO4: SO4
+            OCPHOBIC: OCPHOBIC
+            OCPHILIC: OCPHILIC
+            BCPHOBIC: BCPHOBIC
+            BCPHILIC: BCPHILIC
+            SS001: SS001
+            SS002: SS002
+            SS003: SS003
+            SS004: SS004
+            SS005: SS005
+            DU001: DU001
+            DU002: DU002
+            DU003: DU003
+            DU004: DU004
+            DU005: DU005
+
+Schemes:
+    MAM4:
+        modes:
+            a1:
+                name: Accumulation
+                dry_radius_um: 0.055
+                sigma_g: 1.8
+                filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mode1_larc_c000002.v2.nc
+            a2:
+                name: Aitken
+                dry_radius_um: 0.012
+                sigma_g: 1.6
+                filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mode2_larc_c000002.v2.nc
+            a3:
+                name: Coarse
+                dry_radius_um: 0.40
+                sigma_g: 1.8
+                filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mode3_larc_c000002.v2.nc
+            a4:
+                name: Primary Carbon
+                dry_radius_um: 0.050
+                sigma_g: 1.6
+                filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mode4_larc_c000002.v2.nc
+        allocations:
+            SO4: {a1: 0.90, a2: 0.10, a3: 0.00, a4: 0.00}
+            OCPHILIC: {a1: 1.00}
+            BCPHILIC: {a1: 1.00}
+            OCPHOBIC: {a4: 1.00}
+            BCPHOBIC: {a4: 1.00}
+            NO3: {a1: 0.70, a3: 0.30}
+            POM: {a1: 0.80, a2: 0.20}
+            SOA: {a1: 0.80, a2: 0.20}
+        size_bins:
+            NO3AN:
+                species: [NO3AN1, NO3AN2, NO3AN3]
+                radii_um: [0.15, 0.50, 1.50]
+            SS:
+                species: [SS001, SS002, SS003, SS004, SS005]
+                radii_um: [0.08, 0.30, 1.00, 3.00, 8.00]
+            DU:
+                species: [DU001, DU002, DU003, DU004, DU005]
+                radii_um: [0.73, 1.40, 2.40, 4.50, 8.00]

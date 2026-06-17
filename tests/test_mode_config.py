@@ -4,6 +4,7 @@ import numpy as np
 from mode_config import (
     allocate_size_bins_to_modes,
     default_mam4_allocations,
+    load_config,
     map_mam4_to_mam3,
     normalize_allocations,
     resolved_allocations,
@@ -82,6 +83,17 @@ class TestModeConfig(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             resolved_allocations(config, "MAM4")
+
+
+class TestYamlSchema(unittest.TestCase):
+    def test_aerosol_yaml_has_sources_and_schemes(self):
+        config = load_config("aerosol.yaml")
+        self.assertIn("Sources", config)
+        self.assertIn("Schemes", config)
+        self.assertIn("GEOSIT", config["Sources"])
+        self.assertIn("MERRA2", config["Sources"])
+        self.assertIn("MAM4", config["Schemes"])
+        self.assertIn("allocations", config["Schemes"]["MAM4"])
 
 
 if __name__ == "__main__":
