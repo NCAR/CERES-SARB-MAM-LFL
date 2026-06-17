@@ -28,6 +28,10 @@ class TestModeConfig(unittest.TestCase):
         self.assertAlmostEqual(normalized["a1"], 0.9)
         self.assertAlmostEqual(normalized["a2"], 0.1)
 
+    def test_normalize_allocations_rejects_negative_weights(self):
+        with self.assertRaises(ValueError):
+            normalize_allocations({"a1": 2.0, "a2": -1.0})
+
     def test_size_bin_allocation_prefers_nearest_mode(self):
         bins = np.array([0.15, 0.60])
         modes = {
@@ -61,6 +65,23 @@ class TestModeConfig(unittest.TestCase):
         self.assertIn("DU002", allocations)
         self.assertGreater(allocations["DU001"]["a1"], 0.75)
         self.assertGreater(allocations["DU002"]["a3"], 0.75)
+
+    def test_resolved_allocations_rejects_size_bin_length_mismatch(self):
+        config = {
+            "Schemes": {
+                "MAM4": {
+                    "modes": {
+                        "a1": {"dry_radius_um": 0.15, "sigma_g": 1.6},
+                        "a3": {"dry_radius_um": 0.60, "sigma_g": 1.8},
+                    },
+                    "size_bins": {
+                        "DU": {"species": ["DU001"], "radii_um": [0.15, 0.60]}
+                    },
+                }
+            }
+        }
+        with self.assertRaises(ValueError):
+            resolved_allocations(config, "MAM4")
 
 
 if __name__ == "__main__":

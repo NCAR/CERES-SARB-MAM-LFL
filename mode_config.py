@@ -9,10 +9,13 @@ def load_config(path):
 
 
 def normalize_allocations(weights):
-    total = float(sum(weights.values()))
+    values = {mode: float(value) for mode, value in weights.items()}
+    if any(value < 0.0 for value in values.values()):
+        raise ValueError("allocation weights must be non-negative")
+    total = float(sum(values.values()))
     if total <= 0.0:
         raise ValueError("allocation weights must have positive sum")
-    return {mode: float(value) / total for mode, value in weights.items() if float(value) > 0.0}
+    return {mode: value / total for mode, value in values.items() if value > 0.0}
 
 
 def default_mam4_allocations():
@@ -66,7 +69,11 @@ def resolved_allocations(config, scheme):
     }
     mode_specs = scheme_info["modes"]
     for group in scheme_info.get("size_bins", {}).values():
-        generated = allocate_size_bins_to_modes(group["radii_um"], mode_specs)
-        for species, weights in zip(group["species"], generated):
+        species_names = group["species"]
+        radii_um = group["radii_um"]
+        if len(species_names) != len(radii_um):
+            raise ValueError("size_bins species and radii_um must have same length")
+        generated = allocate_size_bins_to_modes(radii_um, mode_specs)
+        for species, weights in zip(species_names, generated):
             allocations[species] = weights
     return allocations
