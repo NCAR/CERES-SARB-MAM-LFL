@@ -40,6 +40,31 @@ geometric radius, geometric sigma, SARB lookup table path, RRTMG/MAM metadata
 path if needed, and a species membership list. `Types` keeps optical constants,
 density, and hygroscopicity coefficients.
 
+## Mixing State Defaults
+
+YAML determines source-species allocation into modes. Within each mode, allocated
+species are internally mixed. Between modes, mode outputs remain externally mixed
+until `mode_external_mix.py` sums them.
+
+Size-binned fields such as `DU001..DU005`, `SS001..SS005`, and
+`NO3AN1..NO3AN3` are allocated to modes by overlap between each source-bin
+radius and the configured mode lognormal dry size distribution. Fractions are
+normalized so each source species sums to 1.0 across modes.
+
+Bulk soluble or aged species default mostly to accumulation mode. Bulk fresh
+hydrophobic carbon defaults to the primary carbon mode when the scheme has one.
+
+MAM4 defaults:
+
+- `SO4`: `a1=0.90`, `a2=0.10`, `a3=0.00`, `a4=0.00`
+- `OCPHILIC`, `BCPHILIC`: `a1=1.00`
+- `OCPHOBIC`, `BCPHOBIC`: `a4=1.00`
+- bulk `NO3`: `a1=0.70`, `a3=0.30`
+- bulk `POM`, `SOA`: `a1=0.80`, `a2=0.20`
+
+For MAM3, any primary-carbon `a4` allocation maps to accumulation `a1` unless a
+scheme-specific YAML override is provided.
+
 ## Processing
 
 Add `mode_optics.py` as the main script.
