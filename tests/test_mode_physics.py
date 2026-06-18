@@ -1,10 +1,13 @@
 import unittest
 
 import numpy as np
+import xarray as xr
 
 from mode_physics import (
     derive_number_mixing_ratio,
     kohler_wet_radius_um,
+    layer_optical_depth,
+    lookup_mode_optics,
     lognormal_volume_factor,
     mix_mode_state,
 )
@@ -91,6 +94,99 @@ class TestModePhysics(unittest.TestCase):
 
         self.assertTrue(np.isfinite(wet[0]))
         self.assertGreater(float(wet[0]), 0.05)
+
+    def test_layer_optical_depth_computes_broadcast_tau(self):
+        delp = np.array([[980.0, 1960.0]], dtype=np.float32)
+        number = np.array([[2.0], [4.0]], dtype=np.float32)
+        cross_section = np.array([[3.0, 5.0]], dtype=np.float32)
+
+        tau = layer_optical_depth(delp, number, cross_section)
+
+        expected = cross_section * 1.0e-12 * number * delp / 9.8
+        self.assertEqual(tau.shape, (2, 2))
+        self.assertEqual(tau.dtype, np.float32)
+        np.testing.assert_allclose(tau, expected.astype(np.float32))
+
+    def test_layer_optical_depth_zero_inputs_return_zero(self):
+        delp = np.array([0.0, 980.0, 980.0], dtype=np.float32)
+        number = np.array([2.0, 0.0, 2.0], dtype=np.float32)
+        cross_section = np.array([3.0, 3.0, 0.0], dtype=np.float32)
+
+        tau = layer_optical_depth(delp, number, cross_section)
+
+        np.testing.assert_array_equal(tau, np.zeros(3, dtype=np.float32))
+
+    def test_layer_optical_depth_rejects_negative_inputs(self):
+        positive = np.array([1.0], dtype=np.float32)
+        cases = (
+            ("delp_pa", np.array([-1.0], dtype=np.float32), positive, positive),
+            ("number_per_kg", positive, np.array([-1.0], dtype=np.float32), positive),
+            ("cross_section_um2", positive, positive, np.array([-1.0], dtype=np.float32)),
+        )
+
+        for name, delp, number, cross_section in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    layer_optical_depth(delp, number, cross_section)
+
+    def _lookup_table(self):
+        n_real = np.array([1.3, 1.5, 1.7], dtype=np.float32)
+        n_imag = np.array([0.0, 0.1], dtype=np.float32)
+        radius = np.array([0.05, 0.10, 0.20], dtype=np.float32)
+        shape = (len(n_real), len(n_imag), len(radius))
+        values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+        coords = {"n_real": n_real, "n_imag": n_imag, "radius": radius}
+        return xr.Dataset(
+            {
+                "ext": (("n_real", "n_imag", "radius"), values),
+                "abs": (("n_real", "n_imag", "radius"), values + 100.0),
+                "asm": (("n_real", "n_imag", "radius"), values + 200.0),
+            },
+            coords=coords,
+        )
+
+    def test_lookup_mode_optics_uses_lower_bins_and_returns_float32(self):
+        ds_table = self._lookup_table()
+        n_re = np.array([[1.30, 1.59], [1.70, 1.49]], dtype=np.float32)
+        n_im = np.array([[-0.05, 0.10], [0.0, -0.09]], dtype=np.float32)
+        radius = np.array([[0.05, 0.15], [0.20, 0.10]], dtype=np.float32)
+
+        ext, abs_, asm = lookup_mode_optics(n_re, n_im, radius, ds_table)
+
+        expected_ext = np.array([[0.0, 10.0], [14.0, 1.0]], dtype=np.float32)
+        self.assertEqual(ext.shape, n_re.shape)
+        self.assertEqual(abs_.shape, n_re.shape)
+        self.assertEqual(asm.shape, n_re.shape)
+        self.assertEqual(ext.dtype, np.float32)
+        self.assertEqual(abs_.dtype, np.float32)
+        self.assertEqual(asm.dtype, np.float32)
+        np.testing.assert_array_equal(ext, expected_ext)
+        np.testing.assert_array_equal(abs_, expected_ext + 100.0)
+        np.testing.assert_array_equal(asm, expected_ext + 200.0)
+
+    def test_lookup_mode_optics_clips_to_table_and_uses_abs_imaginary_index(self):
+        ds_table = self._lookup_table()
+        n_re = np.array([1.0, 2.0], dtype=np.float32)
+        n_im = np.array([-0.2, -0.03], dtype=np.float32)
+        radius = np.array([0.001, 9.0], dtype=np.float32)
+
+        ext, abs_, asm = lookup_mode_optics(n_re, n_im, radius, ds_table)
+
+        expected_ext = np.array([3.0, 14.0], dtype=np.float32)
+        np.testing.assert_array_equal(ext, expected_ext)
+        np.testing.assert_array_equal(abs_, expected_ext + 100.0)
+        np.testing.assert_array_equal(asm, expected_ext + 200.0)
+
+    def test_lookup_mode_optics_missing_variable_raises_key_error(self):
+        ds_table = self._lookup_table().drop_vars("asm")
+
+        with self.assertRaisesRegex(KeyError, "asm"):
+            lookup_mode_optics(
+                np.array([1.3], dtype=np.float32),
+                np.array([0.0], dtype=np.float32),
+                np.array([0.05], dtype=np.float32),
+                ds_table,
+            )
 
 
 if __name__ == "__main__":

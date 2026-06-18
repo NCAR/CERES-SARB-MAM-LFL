@@ -20,6 +20,52 @@ def derive_number_mixing_ratio(dry_volume_m3_per_kg, dry_radius_um, sigma_g):
     ).astype(np.float32)
 
 
+def _nonnegative_array(name, values):
+    array = np.asarray(values, dtype=np.float32)
+    if np.any(array < 0.0):
+        raise ValueError(f"{name} must be non-negative")
+    return array
+
+
+def layer_optical_depth(delp_pa, number_per_kg, cross_section_um2):
+    delp = _nonnegative_array("delp_pa", delp_pa)
+    number = _nonnegative_array("number_per_kg", number_per_kg)
+    cross_section = _nonnegative_array("cross_section_um2", cross_section_um2)
+    delp, number, cross_section = np.broadcast_arrays(delp, number, cross_section)
+    tau = cross_section * np.float32(1.0e-12) * number * delp / np.float32(9.8)
+    return tau.astype(np.float32)
+
+
+def _lower_bin_indices(values, table):
+    table = np.asarray(table, dtype=np.float32)
+    values = np.asarray(values, dtype=np.float32)
+    clipped = np.clip(values, table[0], table[-1])
+    return (np.searchsorted(table, clipped, side="right") - 1).astype(np.int32)
+
+
+def lookup_mode_optics(n_re, n_im, r_w_um, ds_table):
+    n_re_table = ds_table["n_real"].values
+    n_im_table = ds_table["n_imag"].values
+    radius_table = ds_table["radius"].values
+    ext_table = ds_table["ext"].values
+    abs_table = ds_table["abs"].values
+    asm_table = ds_table["asm"].values
+
+    n_re_values, n_im_values, radius_values = np.broadcast_arrays(
+        np.asarray(n_re, dtype=np.float32),
+        np.abs(np.asarray(n_im, dtype=np.float32)),
+        np.asarray(r_w_um, dtype=np.float32),
+    )
+    i_re = _lower_bin_indices(n_re_values, n_re_table)
+    i_im = _lower_bin_indices(n_im_values, n_im_table)
+    i_radius = _lower_bin_indices(radius_values, radius_table)
+
+    ext = ext_table[i_re, i_im, i_radius]
+    abs_ = abs_table[i_re, i_im, i_radius]
+    asm = asm_table[i_re, i_im, i_radius]
+    return ext.astype(np.float32), abs_.astype(np.float32), asm.astype(np.float32)
+
+
 def _q_arrays(q):
     if not q:
         raise ValueError("q must contain at least one species")
