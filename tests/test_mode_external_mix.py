@@ -4,6 +4,7 @@ from unittest import mock
 import numpy as np
 import xarray as xr
 
+import mode_optics
 from mode_external_mix import main, mix_mode_datasets
 from mode_optics import build_mode_output_dataset
 
@@ -326,6 +327,28 @@ class TestModeOutputDataset(unittest.TestCase):
         self.assertEqual(ds.attrs["scheme"], "MAM4")
         self.assertEqual(ds.attrs["mode"], "a1")
 
+    def test_supports_time_lev_lat_lon_layers(self):
+        dims = ("time", "lev", "lat", "lon")
+        coords = {
+            "time": np.array([0], dtype=np.int32),
+            "lev": np.array([1000.0, 850.0], dtype=np.float32),
+            "lat": np.array([-45.0], dtype=np.float32),
+            "lon": np.array([0.0], dtype=np.float32),
+        }
+        delp = xr.DataArray(np.full((1, 2, 1, 1), 100.0, dtype=np.float32), dims=dims, coords=coords)
+        tau_ext = xr.DataArray(np.full((1, 2, 1, 1), 0.2, dtype=np.float32), dims=dims, coords=coords)
+        tau_sca = xr.DataArray(np.full((1, 2, 1, 1), 0.1, dtype=np.float32), dims=dims, coords=coords)
+        asm = xr.DataArray(np.full((1, 2, 1, 1), 0.7, dtype=np.float32), dims=dims, coords=coords)
+
+        ds = build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
+        self.assertEqual(ds["Extinction_Layer_Optical_Depth"].dims, dims)
+        self.assertEqual(ds["Extinction_Column_Optical_Depth"].dims, ("time", "lat", "lon"))
+        np.testing.assert_allclose(
+            ds["Extinction_Column_Optical_Depth"].values,
+            np.full((1, 1, 1), 0.4, dtype=np.float32),
+        )
+
     def test_scattering_clips_to_nonnegative_and_extinction(self):
         delp, tau_ext, tau_sca, asm = self._arrays(
             ext=np.array([[[0.2]], [[0.4]]], dtype=np.float32),
@@ -365,6 +388,22 @@ class TestModeOutputDataset(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lev"):
             build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
 
+    def test_rejects_unsupported_extra_layer_dims(self):
+        dims = ("band", "lev", "lat", "lon")
+        coords = {
+            "band": np.array([1], dtype=np.int32),
+            "lev": np.array([1000.0, 850.0], dtype=np.float32),
+            "lat": np.array([-45.0], dtype=np.float32),
+            "lon": np.array([0.0], dtype=np.float32),
+        }
+        delp = xr.DataArray(np.ones((1, 2, 1, 1), dtype=np.float32), dims=dims, coords=coords)
+        tau_ext = xr.DataArray(np.ones((1, 2, 1, 1), dtype=np.float32), dims=dims, coords=coords)
+        tau_sca = xr.DataArray(np.ones((1, 2, 1, 1), dtype=np.float32), dims=dims, coords=coords)
+        asm = xr.DataArray(np.zeros((1, 2, 1, 1), dtype=np.float32), dims=dims, coords=coords)
+
+        with self.assertRaisesRegex(ValueError, "unsupported dims"):
+            build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
     def test_rejects_mismatched_dims_or_shapes(self):
         delp, tau_ext, tau_sca, asm = self._arrays()
         mismatched_dims = tau_sca.transpose("lat", "lev", "lon")
@@ -390,6 +429,45 @@ class TestModeOutputDataset(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "tau_ext.*negative"):
             build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
+    def test_mode_optics_cli_rejects_band_and_wvl_together(self):
+        with mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit) as cm:
+                mode_optics.main(
+                    [
+                        "--source",
+                        "geosit",
+                        "--mode",
+                        "a1",
+                        "--band",
+                        "sw01",
+                        "--wvl",
+                        "550",
+                        "--start",
+                        "2010-01-01T00",
+                        "--end",
+                        "2010-01-01T00",
+                    ]
+                )
+
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_mode_optics_cli_defaults_band_before_placeholder(self):
+        with self.assertRaises(SystemExit) as cm:
+            mode_optics.main(
+                [
+                    "--source",
+                    "geosit",
+                    "--mode",
+                    "a1",
+                    "--start",
+                    "2010-01-01T00",
+                    "--end",
+                    "2010-01-01T00",
+                ]
+            )
+
+        self.assertRegex(str(cm.exception), "Task 8|mode_optics computation")
 
 
 if __name__ == "__main__":

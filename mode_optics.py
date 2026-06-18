@@ -11,6 +11,11 @@ SCA = "Scattering_Layer_Optical_Depth"
 ASM = "Layer_Asymmetry_Parameter"
 COL = "Extinction_Column_Optical_Depth"
 
+SUPPORTED_LAYER_DIMS = (
+    ("lev", "lat", "lon"),
+    ("time", "lev", "lat", "lon"),
+)
+
 
 def _require_dataarray(name, value):
     if not isinstance(value, xr.DataArray):
@@ -35,6 +40,9 @@ def _validate_layer_inputs(delp, tau_ext, tau_sca, asm):
         raise ValueError("tau_ext must include lev dimension")
 
     expected_dims = tau_ext.dims
+    if expected_dims not in SUPPORTED_LAYER_DIMS:
+        raise ValueError("unsupported dims %s for layer variables" % (expected_dims,))
+
     expected_shape = tau_ext.shape
     for name, value in arrays:
         if value.dims != expected_dims:
