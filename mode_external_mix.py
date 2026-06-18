@@ -56,17 +56,16 @@ def _validate_dims_shape(ds, index, expected_dims, expected_shape):
         raise ValueError("dataset %d variable %s shape must match %s" % (index, DELP, expected_shape))
 
 
-def _validate_ext_coords(ds, index, base_ext):
-    ext = ds[EXT]
+def _validate_variable_coords(da, index, base_ext, variable):
     for coord in base_ext.dims:
         base_has_coord = coord in base_ext.coords
-        has_coord = coord in ext.coords
+        has_coord = coord in da.coords
         if base_has_coord != has_coord:
-            raise ValueError("dataset %d coord %s must match first dataset" % (index, coord))
+            raise ValueError("dataset %d variable %s coord %s must match first dataset" % (index, variable, coord))
         if not base_has_coord:
             continue
-        if not np.array_equal(base_ext.coords[coord].values, ext.coords[coord].values):
-            raise ValueError("dataset %d coord %s must match first dataset" % (index, coord))
+        if not np.array_equal(base_ext.coords[coord].values, da.coords[coord].values):
+            raise ValueError("dataset %d variable %s coord %s must match first dataset" % (index, variable, coord))
 
 
 def _validate_delp_values(ds, index, base_delp):
@@ -80,7 +79,14 @@ def _has_any(condition):
     return bool(condition.any().compute().item())
 
 
+def _validate_finite(da, index, variable):
+    if _has_any(~np.isfinite(da)):
+        raise ValueError("dataset %d variable %s contains non-finite values" % (index, variable))
+
+
 def _validate_optical_depths(ext, sca, index):
+    _validate_finite(ext, index, EXT)
+    _validate_finite(sca, index, SCA)
     if _has_any(ext < 0.0):
         raise ValueError("dataset %d variable %s contains negative values" % (index, EXT))
     if _has_any(sca < 0.0):
@@ -108,13 +114,15 @@ def mix_mode_datasets(datasets):
 
     for index, ds in enumerate(datasets):
         _validate_dims_shape(ds, index, expected_dims, expected_shape)
-        _validate_ext_coords(ds, index, base_ext)
+        for variable in (DELP, EXT, SCA, ASM):
+            _validate_variable_coords(ds[variable], index, base_ext, variable)
         _validate_delp_values(ds, index, base_delp)
         ext = ds[EXT].astype(np.float32)
         sca = ds[SCA].astype(np.float32)
         asm = ds[ASM].astype(np.float32)
 
         _validate_optical_depths(ext, sca, index)
+        _validate_finite(asm, index, ASM)
 
         total_ext = total_ext + ext
         total_sca = total_sca + sca

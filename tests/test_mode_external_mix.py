@@ -218,6 +218,29 @@ class TestModeExternalMix(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lat"):
             mix_mode_datasets([first, second])
 
+    def test_mismatched_layer_variable_coords_raise_value_error(self):
+        first = mode_dataset(
+            ext=np.ones((1, 2, 1, 1), dtype=np.float32),
+            sca=np.ones((1, 2, 1, 1), dtype=np.float32),
+            asm=np.ones((1, 2, 1, 1), dtype=np.float32),
+        )
+        dims = ("time", "lev", "lat", "lon")
+        coords = {
+            "time": np.array([0], dtype=np.int32),
+            "lev": np.array([1000.0, 850.0], dtype=np.float32),
+            "lat": np.array([10.0], dtype=np.float32),
+            "lon": np.array([0.0], dtype=np.float32),
+        }
+        second = first.copy(deep=True)
+        second["Scattering_Layer_Optical_Depth"] = xr.DataArray(
+            np.ones((1, 2, 1, 1), dtype=np.float32),
+            dims=dims,
+            coords=coords,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Scattering_Layer_Optical_Depth.*non-finite"):
+            mix_mode_datasets([first, second])
+
     def test_later_dataset_delp_values_must_match_first_delp(self):
         first = mode_dataset(
             ext=np.ones((1, 2, 1, 1), dtype=np.float32),
@@ -250,6 +273,23 @@ class TestModeExternalMix(unittest.TestCase):
             mix_mode_datasets([bad_ext])
         with self.assertRaisesRegex(ValueError, "Scattering_Layer_Optical_Depth.*negative"):
             mix_mode_datasets([bad_sca])
+
+    def test_non_finite_layer_values_raise_value_error(self):
+        bad_sca = mode_dataset(
+            ext=np.ones((1, 2, 1, 1), dtype=np.float32),
+            sca=np.array([[[[np.nan]], [[0.2]]]], dtype=np.float32),
+            asm=np.zeros((1, 2, 1, 1), dtype=np.float32),
+        )
+        bad_asm = mode_dataset(
+            ext=np.ones((1, 2, 1, 1), dtype=np.float32),
+            sca=np.ones((1, 2, 1, 1), dtype=np.float32),
+            asm=np.array([[[[np.nan]], [[0.2]]]], dtype=np.float32),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Scattering_Layer_Optical_Depth.*non-finite"):
+            mix_mode_datasets([bad_sca])
+        with self.assertRaisesRegex(ValueError, "Layer_Asymmetry_Parameter.*non-finite"):
+            mix_mode_datasets([bad_asm])
 
     def test_scattering_greater_than_extinction_raises_value_error(self):
         bad = mode_dataset(

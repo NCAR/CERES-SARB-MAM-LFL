@@ -137,9 +137,9 @@ Mixtures:
 
 Sources:
     GEOSIT:
-        input_pattern: GEOSIT/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.YYYY-MM-DDTHH00.V01.nc4
-        output_pattern: GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.{label}_{band}.YYYY-MM-DDTHH00.V01.nc4
-        external_vis_pattern: GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.AER_550NM.YYYY-MM-DDTHH00.V01.nc4
+        input_pattern: /CERES/sarb/dfillmor/GEOSIT/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.YYYY-MM-DDTHH00.V01.nc4
+        output_pattern: /CERES/sarb/dfillmor/GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.{label}_{band}.YYYY-MM-DDTHH00.V01.nc4
+        external_vis_pattern: /CERES/sarb/dfillmor/GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.AER_550NM.YYYY-MM-DDTHH00.V01.nc4
         dims:
             time: time
             lev: lev

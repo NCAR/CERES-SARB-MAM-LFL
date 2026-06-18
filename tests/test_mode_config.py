@@ -139,8 +139,9 @@ class TestYamlSchema(unittest.TestCase):
         sources = config["Sources"]
         modes = config["Schemes"]["MAM4"]["modes"]
 
-        self.assertIn("GEOSIT_alpha_4/", sources["GEOSIT"]["output_pattern"])
-        self.assertIn("GEOSIT_alpha_4/", sources["GEOSIT"]["external_vis_pattern"])
+        self.assertIn("/CERES/sarb/dfillmor/GEOSIT/", sources["GEOSIT"]["input_pattern"])
+        self.assertIn("/CERES/sarb/dfillmor/GEOSIT_alpha_4/", sources["GEOSIT"]["output_pattern"])
+        self.assertIn("/CERES/sarb/dfillmor/GEOSIT_alpha_4/", sources["GEOSIT"]["external_vis_pattern"])
         self.assertEqual(
             sources["MERRA2"]["input_pattern"],
             "/CERES_prd/GMAO/MERRA2/YYYY/MM/MERRA2_300.inst3_3d_aer_Nv.YYYYMMDD.nc4",
