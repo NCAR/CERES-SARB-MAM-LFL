@@ -69,6 +69,7 @@ def _validate_variable_coords(da, index, base_ext, variable):
 
 
 def _validate_delp_values(ds, index, base_delp):
+    _validate_finite(ds[DELP], index, DELP)
     if index == 0:
         return
     if not np.allclose(ds[DELP].values, base_delp.values):
