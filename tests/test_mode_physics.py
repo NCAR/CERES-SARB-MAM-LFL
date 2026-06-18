@@ -129,6 +129,19 @@ class TestModePhysics(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, name):
                     layer_optical_depth(delp, number, cross_section)
 
+    def test_layer_optical_depth_rejects_non_finite_inputs(self):
+        positive = np.array([1.0], dtype=np.float32)
+        cases = (
+            ("delp_pa", np.array([np.nan], dtype=np.float32), positive, positive),
+            ("number_per_kg", positive, np.array([np.inf], dtype=np.float32), positive),
+            ("cross_section_um2", positive, positive, np.array([np.nan], dtype=np.float32)),
+        )
+
+        for name, delp, number, cross_section in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    layer_optical_depth(delp, number, cross_section)
+
     def _lookup_table(self):
         n_real = np.array([1.3, 1.5, 1.7], dtype=np.float32)
         n_imag = np.array([0.0, 0.1], dtype=np.float32)
@@ -164,6 +177,41 @@ class TestModePhysics(unittest.TestCase):
         np.testing.assert_array_equal(abs_, expected_ext + 100.0)
         np.testing.assert_array_equal(asm, expected_ext + 200.0)
 
+    def test_lookup_mode_optics_uses_named_dimensions(self):
+        ds_table = self._lookup_table()
+        ds_table = xr.Dataset(
+            {
+                "ext": (
+                    ("radius", "n_imag", "n_real"),
+                    ds_table["ext"].transpose("radius", "n_imag", "n_real").values,
+                ),
+                "abs": (
+                    ("radius", "n_imag", "n_real"),
+                    ds_table["abs"].transpose("radius", "n_imag", "n_real").values,
+                ),
+                "asm": (
+                    ("radius", "n_imag", "n_real"),
+                    ds_table["asm"].transpose("radius", "n_imag", "n_real").values,
+                ),
+            },
+            coords={
+                "n_real": ds_table["n_real"].values,
+                "n_imag": ds_table["n_imag"].values,
+                "radius": ds_table["radius"].values,
+            },
+        )
+
+        ext, abs_, asm = lookup_mode_optics(
+            np.array([1.70], dtype=np.float32),
+            np.array([-0.10], dtype=np.float32),
+            np.array([0.05], dtype=np.float32),
+            ds_table,
+        )
+
+        np.testing.assert_array_equal(ext, np.array([15.0], dtype=np.float32))
+        np.testing.assert_array_equal(abs_, np.array([115.0], dtype=np.float32))
+        np.testing.assert_array_equal(asm, np.array([215.0], dtype=np.float32))
+
     def test_lookup_mode_optics_clips_to_table_and_uses_abs_imaginary_index(self):
         ds_table = self._lookup_table()
         n_re = np.array([1.0, 2.0], dtype=np.float32)
@@ -177,10 +225,37 @@ class TestModePhysics(unittest.TestCase):
         np.testing.assert_array_equal(abs_, expected_ext + 100.0)
         np.testing.assert_array_equal(asm, expected_ext + 200.0)
 
+    def test_lookup_mode_optics_rejects_non_finite_inputs(self):
+        ds_table = self._lookup_table()
+        positive = np.array([1.3], dtype=np.float32)
+        radius = np.array([0.05], dtype=np.float32)
+        cases = (
+            ("n_re", np.array([np.nan], dtype=np.float32), positive, radius),
+            ("n_im", positive, np.array([np.inf], dtype=np.float32), radius),
+            ("r_w_um", positive, positive, np.array([np.nan], dtype=np.float32)),
+        )
+
+        for name, n_re, n_im, r_w_um in cases:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    lookup_mode_optics(n_re, n_im, r_w_um, ds_table)
+
     def test_lookup_mode_optics_missing_variable_raises_key_error(self):
         ds_table = self._lookup_table().drop_vars("asm")
 
         with self.assertRaisesRegex(KeyError, "asm"):
+            lookup_mode_optics(
+                np.array([1.3], dtype=np.float32),
+                np.array([0.0], dtype=np.float32),
+                np.array([0.05], dtype=np.float32),
+                ds_table,
+            )
+
+    def test_lookup_mode_optics_variable_missing_required_dims_raises_value_error(self):
+        ds_table = self._lookup_table()
+        ds_table["ext"] = (("n_real", "n_imag"), ds_table["ext"].isel(radius=0).values)
+
+        with self.assertRaisesRegex(ValueError, "ext"):
             lookup_mode_optics(
                 np.array([1.3], dtype=np.float32),
                 np.array([0.0], dtype=np.float32),

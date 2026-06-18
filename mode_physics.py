@@ -20,8 +20,15 @@ def derive_number_mixing_ratio(dry_volume_m3_per_kg, dry_radius_um, sigma_g):
     ).astype(np.float32)
 
 
-def _nonnegative_array(name, values):
+def _finite_array(name, values):
     array = np.asarray(values, dtype=np.float32)
+    if np.any(~np.isfinite(array)):
+        raise ValueError(f"{name} must be finite")
+    return array
+
+
+def _nonnegative_array(name, values):
+    array = _finite_array(name, values)
     if np.any(array < 0.0):
         raise ValueError(f"{name} must be non-negative")
     return array
@@ -43,18 +50,26 @@ def _lower_bin_indices(values, table):
     return (np.searchsorted(table, clipped, side="right") - 1).astype(np.int32)
 
 
+def _lookup_table_values(ds_table, variable):
+    required_dims = ("n_real", "n_imag", "radius")
+    values = ds_table[variable]
+    if len(values.dims) != len(required_dims) or set(values.dims) != set(required_dims):
+        raise ValueError(f"{variable} must use dimensions {required_dims}")
+    return values.transpose(*required_dims).values
+
+
 def lookup_mode_optics(n_re, n_im, r_w_um, ds_table):
     n_re_table = ds_table["n_real"].values
     n_im_table = ds_table["n_imag"].values
     radius_table = ds_table["radius"].values
-    ext_table = ds_table["ext"].values
-    abs_table = ds_table["abs"].values
-    asm_table = ds_table["asm"].values
+    ext_table = _lookup_table_values(ds_table, "ext")
+    abs_table = _lookup_table_values(ds_table, "abs")
+    asm_table = _lookup_table_values(ds_table, "asm")
 
     n_re_values, n_im_values, radius_values = np.broadcast_arrays(
-        np.asarray(n_re, dtype=np.float32),
-        np.abs(np.asarray(n_im, dtype=np.float32)),
-        np.asarray(r_w_um, dtype=np.float32),
+        _finite_array("n_re", n_re),
+        np.abs(_finite_array("n_im", n_im)),
+        _finite_array("r_w_um", r_w_um),
     )
     i_re = _lower_bin_indices(n_re_values, n_re_table)
     i_im = _lower_bin_indices(n_im_values, n_im_table)
