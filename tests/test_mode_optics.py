@@ -101,6 +101,21 @@ class TestModeOpticsHelpers(unittest.TestCase):
             6.0,
         )
 
+    def test_mode_table_path_uses_raw_band_or_lowercase_wavelength_label(self):
+        mode_spec = {"filename_sarb": "/tables/mam4_mode1_larc_c000002.nc"}
+
+        band_path = mode_optics._mode_table_path(
+            mode_spec,
+            SimpleNamespace(wvl=None, band="sw01"),
+        )
+        wavelength_path = mode_optics._mode_table_path(
+            mode_spec,
+            SimpleNamespace(wvl=550.0, band=None),
+        )
+
+        self.assertEqual(band_path, "/tables/mam4_mode1_sw01_larc_c000002.nc")
+        self.assertEqual(wavelength_path, "/tables/mam4_mode1_550nm_larc_c000002.nc")
+
 
 class TestModeOpticsRun(unittest.TestCase):
     def _config(self):
@@ -196,8 +211,11 @@ class TestModeOpticsRun(unittest.TestCase):
     def test_run_writes_single_synthetic_mode_dataset(self):
         written = {}
 
+        opened_paths = []
+
         def fake_open_dataset(path):
-            if path == "mode_SW01_larc.nc":
+            opened_paths.append(path)
+            if path == "mode_sw01_larc.nc":
                 return self._table()
             if path == "optics_SU.nc":
                 return self._sulfate_refraction()
@@ -243,6 +261,8 @@ class TestModeOpticsRun(unittest.TestCase):
             self.assertEqual(written["path"], expected_output)
 
         ds = written["dataset"]
+        self.assertIn("mode_sw01_larc.nc", opened_paths)
+        self.assertNotIn("mode_SW01_larc.nc", opened_paths)
         self.assertEqual(
             set(ds.data_vars),
             {
@@ -262,6 +282,58 @@ class TestModeOpticsRun(unittest.TestCase):
         self.assertEqual(ds.attrs["scheme"], "MAMX")
         self.assertEqual(ds.attrs["mode"], "a1")
         self.assertEqual(ds.attrs["band"], "SW01")
+
+    def test_compute_mode_dataset_converts_absorption_cross_section_to_layer_tau(self):
+        config = self._config()
+        fields = self._fields()
+        args = SimpleNamespace(wvl=None, band="sw01")
+        shape = fields.rh.shape
+        table = self._table()
+        ext_cross = np.full(shape, 3.0, dtype=np.float32)
+        abs_cross = np.full(shape, 1.0, dtype=np.float32)
+        asm = np.full(shape, 0.5, dtype=np.float32)
+        calls = []
+
+        def fake_layer_optical_depth(delp, number, cross_section):
+            calls.append(np.asarray(cross_section, dtype=np.float32).copy())
+            return np.asarray(cross_section, dtype=np.float32) * 10.0
+
+        with mock.patch("mode_optics.xr.open_dataset", return_value=table):
+            with mock.patch(
+                "mode_optics.mix_mode_state",
+                return_value={
+                    "dry_volume": np.ones(shape, dtype=np.float32),
+                    "r_w_um": np.full(shape, 0.05, dtype=np.float32),
+                    "n_re": np.full(shape, 1.5, dtype=np.float32),
+                    "n_im": np.zeros(shape, dtype=np.float32),
+                },
+            ):
+                with mock.patch("mode_optics.derive_number_mixing_ratio", return_value=np.ones(shape, dtype=np.float32)):
+                    with mock.patch("mode_optics.lookup_mode_optics", return_value=(ext_cross, abs_cross, asm)):
+                        with mock.patch("mode_optics._refractive_indices", return_value={"SO4": (1.5, 0.0)}):
+                            with mock.patch("mode_optics.layer_optical_depth", side_effect=fake_layer_optical_depth):
+                                ds = mode_optics.compute_mode_dataset(
+                                    config,
+                                    "TEST",
+                                    config["Sources"]["TEST"],
+                                    "MAMX",
+                                    "a1",
+                                    "SW01",
+                                    args,
+                                    fields,
+                                )
+
+        self.assertEqual(len(calls), 2)
+        np.testing.assert_allclose(calls[0], ext_cross)
+        np.testing.assert_allclose(calls[1], abs_cross)
+        np.testing.assert_allclose(
+            ds["Extinction_Layer_Optical_Depth"].values,
+            np.full(shape, 30.0, dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            ds["Scattering_Layer_Optical_Depth"].values,
+            np.full(shape, 20.0, dtype=np.float32),
+        )
 
 
 if __name__ == "__main__":

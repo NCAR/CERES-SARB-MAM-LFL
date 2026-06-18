@@ -142,7 +142,7 @@ def _mode_table_path(mode_spec, args):
     if args.wvl is not None:
         replacement = "%dnm_larc" % int(float(args.wvl))
     else:
-        replacement = "%s_larc" % _band_label(args)
+        replacement = "%s_larc" % str(args.band).lower()
     return path.replace("larc", replacement, 1)
 
 
@@ -310,9 +310,9 @@ def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_lab
             state["r_w_um"],
             ds_table,
         )
-        cross_sca = np.maximum(cross_ext - cross_abs, 0.0).astype(np.float32)
         tau_ext = layer_optical_depth(fields.delp, number, cross_ext)
-        tau_sca = layer_optical_depth(fields.delp, number, cross_sca)
+        tau_abs = layer_optical_depth(fields.delp, number, cross_abs)
+        tau_sca = np.clip(tau_ext - tau_abs, 0.0, tau_ext).astype(np.float32)
     finally:
         ds_table.close()
 
