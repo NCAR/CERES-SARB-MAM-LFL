@@ -117,6 +117,116 @@ class TestModeOpticsHelpers(unittest.TestCase):
         self.assertEqual(band_path, "/tables/mam4_mode1_sw01_larc_c000002.nc")
         self.assertEqual(wavelength_path, "/tables/mam4_mode1_550nm_larc_c000002.nc")
 
+    def test_read_vis_column_returns_lat_lon_column_from_singleton_time(self):
+        source = xr.Dataset(
+            {
+                "Extinction_Column_Optical_Depth": (
+                    ("time", "lat", "lon"),
+                    np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32),
+                )
+            },
+            coords={
+                "time": np.array([0], dtype=np.int32),
+                "lat": np.array([-10.0, 10.0], dtype=np.float32),
+                "lon": np.array([100.0, 110.0], dtype=np.float32),
+            },
+        )
+
+        with mock.patch("mode_optics.xr.open_dataset", return_value=source) as open_dataset:
+            column = mode_optics._read_vis_column("external_vis.nc")
+
+        open_dataset.assert_called_once_with("external_vis.nc")
+        self.assertEqual(column.dims, ("lat", "lon"))
+        np.testing.assert_allclose(
+            column.values,
+            np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        )
+
+    def test_read_vis_column_raises_for_missing_or_unsupported_column(self):
+        missing = xr.Dataset()
+        multi_time = xr.Dataset(
+            {
+                "Extinction_Column_Optical_Depth": (
+                    ("time", "lat", "lon"),
+                    np.ones((2, 1, 1), dtype=np.float32),
+                )
+            }
+        )
+
+        with mock.patch("mode_optics.xr.open_dataset", return_value=missing):
+            with self.assertRaises(KeyError):
+                mode_optics._read_vis_column("missing.nc")
+
+        with mock.patch("mode_optics.xr.open_dataset", return_value=multi_time):
+            with self.assertRaises(ValueError):
+                mode_optics._read_vis_column("multi_time.nc")
+
+    def test_apply_vis_correction_scales_ext_sca_and_recomputes_column(self):
+        coords = {
+            "lev": np.array([1, 2], dtype=np.int32),
+            "lat": np.array([45.0], dtype=np.float32),
+            "lon": np.array([270.0], dtype=np.float32),
+        }
+        ds = xr.Dataset(
+            {
+                "DELP": (("lev", "lat", "lon"), np.full((2, 1, 1), 100.0, dtype=np.float32)),
+                "Extinction_Layer_Optical_Depth": (
+                    ("lev", "lat", "lon"),
+                    np.ones((2, 1, 1), dtype=np.float32),
+                ),
+                "Scattering_Layer_Optical_Depth": (
+                    ("lev", "lat", "lon"),
+                    np.ones((2, 1, 1), dtype=np.float32),
+                ),
+                "Layer_Asymmetry_Parameter": (
+                    ("lev", "lat", "lon"),
+                    np.full((2, 1, 1), 0.6, dtype=np.float32),
+                ),
+                "Extinction_Column_Optical_Depth": (
+                    ("lat", "lon"),
+                    np.full((1, 1), 2.0, dtype=np.float32),
+                ),
+            },
+            coords=coords,
+            attrs={"mode": "a1"},
+        )
+        external_column = xr.DataArray(
+            np.full((1, 1), 4.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": coords["lat"], "lon": coords["lon"]},
+        )
+        internal_column = xr.DataArray(
+            np.full((1, 1), 2.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": coords["lat"], "lon": coords["lon"]},
+        )
+
+        corrected, stats = mode_optics._apply_vis_correction_to_dataset(
+            ds,
+            external_column,
+            internal_column,
+        )
+
+        np.testing.assert_allclose(
+            corrected["Extinction_Layer_Optical_Depth"].values,
+            np.full((2, 1, 1), 2.0, dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            corrected["Scattering_Layer_Optical_Depth"].values,
+            np.full((2, 1, 1), 2.0, dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            corrected["Extinction_Column_Optical_Depth"].values,
+            np.full((1, 1), 4.0, dtype=np.float32),
+        )
+        np.testing.assert_allclose(
+            corrected["Layer_Asymmetry_Parameter"].values,
+            ds["Layer_Asymmetry_Parameter"].values,
+        )
+        self.assertEqual(stats, {"capped": 0, "skipped": 0})
+        self.assertEqual(corrected.attrs["vis_correction_capped"], 0)
+        self.assertEqual(corrected.attrs["vis_correction_skipped"], 0)
+
 
 class TestModeOpticsRun(unittest.TestCase):
     def _config(self):
@@ -239,6 +349,41 @@ class TestModeOpticsRun(unittest.TestCase):
             coords={"wavelength1": np.array([0.50, 0.55], dtype=np.float32)},
         )
 
+    def _simple_mode_dataset(self):
+        coords = {
+            "time": xr.DataArray(np.array([0], dtype=np.int32), dims=("time",)),
+            "lev": xr.DataArray(np.array([1000.0, 850.0], dtype=np.float32), dims=("lev",)),
+            "lat": xr.DataArray(np.array([45.0], dtype=np.float32), dims=("lat",)),
+            "lon": xr.DataArray(np.array([270.0], dtype=np.float32), dims=("lon",)),
+        }
+        delp = xr.DataArray(
+            np.full((1, 2, 1, 1), 100.0, dtype=np.float32),
+            dims=("time", "lev", "lat", "lon"),
+            coords=coords,
+        )
+        tau_ext = xr.DataArray(
+            np.full((1, 2, 1, 1), 0.5, dtype=np.float32),
+            dims=("time", "lev", "lat", "lon"),
+            coords=coords,
+        )
+        tau_sca = xr.DataArray(
+            np.full((1, 2, 1, 1), 0.25, dtype=np.float32),
+            dims=("time", "lev", "lat", "lon"),
+            coords=coords,
+        )
+        asm = xr.DataArray(
+            np.full((1, 2, 1, 1), 0.6, dtype=np.float32),
+            dims=("time", "lev", "lat", "lon"),
+            coords=coords,
+        )
+        return mode_optics.build_mode_output_dataset(
+            delp,
+            tau_ext,
+            tau_sca,
+            asm,
+            {"source": "TEST", "scheme": "MAMX", "mode": "a1", "band": "SW01"},
+        )
+
     def test_run_writes_single_synthetic_mode_dataset(self):
         written = {}
 
@@ -271,6 +416,7 @@ class TestModeOpticsRun(unittest.TestCase):
                 datadir=tmpdir,
                 outdir=tmpdir,
                 external_vis=None,
+                internal_vis=None,
             )
             config = self._config()
             fields = self._fields()
@@ -314,6 +460,147 @@ class TestModeOpticsRun(unittest.TestCase):
         self.assertEqual(ds.attrs["mode"], "a1")
         self.assertEqual(ds.attrs["band"], "SW01")
 
+    def test_run_applies_external_vis_to_current_uncorrected_mode_column(self):
+        written = {}
+        external_column = None
+
+        def fake_open_dataset(path):
+            if path == "mode_sw01_larc.nc":
+                return self._table()
+            if path == "optics_SU.nc":
+                return self._sulfate_refraction()
+            if path == "optics_WAT.nc":
+                return self._water_refraction()
+            if path == "external_vis.nc":
+                return xr.Dataset(
+                    {"Extinction_Column_Optical_Depth": external_column.copy(deep=True)}
+                )
+            raise AssertionError("unexpected open_dataset path %s" % path)
+
+        def fake_to_netcdf(ds, path):
+            written["path"] = path
+            written["dataset"] = ds.copy(deep=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = SimpleNamespace(
+                source="test",
+                scheme="MAMX",
+                mode="a1",
+                band="sw01",
+                wvl=None,
+                start="2020-01-01T00",
+                end="2020-01-01T00",
+                aerosol="unused.yaml",
+                datadir=tmpdir,
+                outdir=tmpdir,
+                external_vis="external_vis.nc",
+                internal_vis=None,
+            )
+            config = self._config()
+            fields = self._fields()
+
+            with mock.patch("mode_optics.load_config", return_value=config):
+                with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                    uncorrected = mode_optics.compute_mode_dataset(
+                        config,
+                        "TEST",
+                        config["Sources"]["TEST"],
+                        "MAMX",
+                        "a1",
+                        "SW01",
+                        args,
+                        fields,
+                    )
+                    external_column = uncorrected["Extinction_Column_Optical_Depth"].isel(
+                        time=0,
+                        drop=True,
+                    ) * np.float32(2.0)
+
+                with mock.patch("mode_optics.open_source_fields", return_value=fields):
+                    with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                        with mock.patch.object(xr.Dataset, "to_netcdf", fake_to_netcdf):
+                            result = mode_optics.run(args)
+
+        self.assertEqual(result, 0)
+        ds = written["dataset"]
+        np.testing.assert_allclose(
+            ds["Extinction_Layer_Optical_Depth"].values,
+            uncorrected["Extinction_Layer_Optical_Depth"].values * 2.0,
+        )
+        np.testing.assert_allclose(
+            ds["Scattering_Layer_Optical_Depth"].values,
+            uncorrected["Scattering_Layer_Optical_Depth"].values * 2.0,
+        )
+        np.testing.assert_allclose(
+            ds["Extinction_Column_Optical_Depth"].isel(time=0, drop=True).values,
+            external_column.values,
+        )
+
+    def test_run_uses_explicit_internal_vis_column_for_correction_factor(self):
+        written = {}
+        current = self._simple_mode_dataset()
+        external_column = xr.DataArray(
+            np.full((1, 1), 4.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": current.coords["lat"], "lon": current.coords["lon"]},
+        )
+        internal_column = xr.DataArray(
+            np.full((1, 1), 2.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": current.coords["lat"], "lon": current.coords["lon"]},
+        )
+
+        def fake_open_dataset(path):
+            if path == "external_vis.nc":
+                return xr.Dataset({"Extinction_Column_Optical_Depth": external_column})
+            if path == "internal_total.nc":
+                return xr.Dataset({"Extinction_Column_Optical_Depth": internal_column})
+            raise AssertionError("unexpected open_dataset path %s" % path)
+
+        def fake_to_netcdf(ds, path):
+            written["path"] = path
+            written["dataset"] = ds.copy(deep=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = SimpleNamespace(
+                source="test",
+                scheme="MAMX",
+                mode="a1",
+                band="sw01",
+                wvl=None,
+                start="2020-01-01T00",
+                end="2020-01-01T00",
+                aerosol="unused.yaml",
+                datadir=tmpdir,
+                outdir=tmpdir,
+                external_vis="external_vis.nc",
+                internal_vis="internal_total.nc",
+            )
+            config = self._config()
+            fields = self._fields()
+
+            with mock.patch("mode_optics.load_config", return_value=config):
+                with mock.patch("mode_optics.open_source_fields", return_value=fields):
+                    with mock.patch("mode_optics.compute_mode_dataset", return_value=current):
+                        with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                            with mock.patch.object(xr.Dataset, "to_netcdf", fake_to_netcdf):
+                                result = mode_optics.run(args)
+
+        self.assertEqual(result, 0)
+        ds = written["dataset"]
+        np.testing.assert_allclose(
+            ds["Extinction_Layer_Optical_Depth"].values,
+            current["Extinction_Layer_Optical_Depth"].values * 2.0,
+        )
+        np.testing.assert_allclose(
+            ds["Scattering_Layer_Optical_Depth"].values,
+            current["Scattering_Layer_Optical_Depth"].values * 2.0,
+        )
+        np.testing.assert_allclose(
+            ds["Extinction_Column_Optical_Depth"].values,
+            current["Extinction_Column_Optical_Depth"].values * 2.0,
+        )
+
     def test_run_selects_single_source_time_for_each_three_hour_output(self):
         written = []
 
@@ -342,6 +629,7 @@ class TestModeOpticsRun(unittest.TestCase):
                 datadir=tmpdir,
                 outdir=tmpdir,
                 external_vis=None,
+                internal_vis=None,
             )
             config = self._config()
             config["Sources"]["TEST"]["input_pattern"] = "input/YYYYMMDD.nc"

@@ -15,6 +15,7 @@ from mode_physics import (
 )
 from source_fields import SourceFields, open_source_fields
 from utils import fill_date_hour_template
+from vis_correction import apply_column_factor, compute_vis_factor
 
 
 DELP = "DELP"
@@ -135,6 +136,66 @@ def _build_path(root, pattern, date_str, label, band_label):
     if root:
         return os.path.join(root, filled)
     return filled
+
+
+def _column_to_lat_lon(column):
+    _require_dataarray("column", column)
+    if column.dims == ("lat", "lon"):
+        return column
+    if column.dims == ("time", "lat", "lon"):
+        if column.sizes.get("time") != 1:
+            raise ValueError("VIS column time dimension must have size 1")
+        return column.isel(time=0, drop=True)
+    raise ValueError("VIS column must have dims ('lat', 'lon') or ('time', 'lat', 'lon')")
+
+
+def _read_vis_column(path):
+    ds = xr.open_dataset(path)
+    try:
+        return _column_to_lat_lon(ds[COL]).load()
+    finally:
+        ds.close()
+
+
+def _is_templated_vis_path(path):
+    value = str(path)
+    return "YYYY" in value or "{label}" in value or "{band}" in value
+
+
+def _resolve_vis_path(path, root, date_str, label, band_label):
+    expanded = os.path.expandvars(str(path))
+    if _is_templated_vis_path(expanded):
+        return _build_path(root, expanded, date_str, label, band_label)
+    return expanded
+
+
+def _factor_for_layer(layer_field, factor):
+    expected_dims = tuple(dim for dim in layer_field.dims if dim != "lev")
+    if factor.dims == expected_dims:
+        return factor
+    if factor.dims == ("lat", "lon") and expected_dims == ("time", "lat", "lon"):
+        if layer_field.sizes.get("time") != 1:
+            raise ValueError("2D VIS correction factor requires singleton time layer fields")
+        if "time" in layer_field.coords:
+            expanded = factor.expand_dims({"time": layer_field.coords["time"]})
+        else:
+            expanded = factor.expand_dims({"time": layer_field.sizes["time"]})
+        return expanded.transpose(*expected_dims)
+    raise ValueError("factor dims must match layer_field dims except lev")
+
+
+def _apply_vis_correction_to_dataset(ds, external_column, internal_column):
+    external_column = _column_to_lat_lon(external_column)
+    internal_column = _column_to_lat_lon(internal_column)
+    factor, stats = compute_vis_factor(external_column, internal_column)
+
+    corrected = ds.copy(deep=True)
+    corrected[EXT] = apply_column_factor(corrected[EXT], _factor_for_layer(corrected[EXT], factor))
+    corrected[SCA] = apply_column_factor(corrected[SCA], _factor_for_layer(corrected[SCA], factor))
+    corrected[COL] = corrected[EXT].sum(dim="lev").astype(np.float32)
+    corrected.attrs["vis_correction_capped"] = int(stats["capped"])
+    corrected.attrs["vis_correction_skipped"] = int(stats["skipped"])
+    return corrected, stats
 
 
 def _mode_table_path(mode_spec, args):
@@ -461,6 +522,27 @@ def run(args):
             args,
             fields,
         )
+        if args.external_vis is not None:
+            external_path = _resolve_vis_path(
+                args.external_vis,
+                args.datadir,
+                date_str,
+                label,
+                band_label,
+            )
+            external_column = _read_vis_column(external_path)
+            if getattr(args, "internal_vis", None) is not None:
+                internal_path = _resolve_vis_path(
+                    args.internal_vis,
+                    args.outdir,
+                    date_str,
+                    label,
+                    band_label,
+                )
+                internal_column = _read_vis_column(internal_path)
+            else:
+                internal_column = _column_to_lat_lon(ds[COL])
+            ds, _stats = _apply_vis_correction_to_dataset(ds, external_column, internal_column)
         output_path = _build_path(
             args.outdir,
             source_spec["output_pattern"],
@@ -489,6 +571,7 @@ def main(argv=None):
     parser.add_argument("--datadir", default=None)
     parser.add_argument("--outdir", default=None)
     parser.add_argument("--external-vis", default=None)
+    parser.add_argument("--internal-vis", default=None)
     args = parser.parse_args(argv)
     if args.band is None and args.wvl is None:
         args.band = "sw01"
