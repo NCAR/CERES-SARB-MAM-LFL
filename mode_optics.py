@@ -316,11 +316,10 @@ def _time_index_for_timestamp(time_coord, timestamp):
             raise ValueError("time coordinate has no datetime values for hour %02d" % timestamp.hour)
         coord_values = converted.to_numpy(dtype="datetime64[ns]")
         target_value = np.datetime64(target.to_datetime64(), "ns")
-        diffs = np.full(values.shape, np.inf, dtype=np.float64)
-        diffs[valid] = np.abs(
-            (coord_values[valid] - target_value).astype("timedelta64[ns]").astype(np.int64)
-        )
-        return int(np.argmin(diffs))
+        matches = np.flatnonzero(valid & (coord_values == target_value))
+        if matches.size == 0:
+            raise ValueError("time coordinate does not contain hour %02d" % timestamp.hour)
+        return int(matches[0])
 
     try:
         numeric = values.astype(np.float64)

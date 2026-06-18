@@ -196,6 +196,14 @@ class TestModeOpticsRun(unittest.TestCase):
             dims=dims,
         )
 
+    def _fields_two_datetimes(self):
+        fields = self._fields_two_times()
+        fields.coords["time"] = xr.DataArray(
+            np.array(["2020-01-01T00", "2020-01-01T03"], dtype="datetime64[ns]"),
+            dims=("time",),
+        )
+        return fields
+
     def _table(self):
         n_real = np.array([1.3, 1.5, 1.7], dtype=np.float32)
         n_imag = np.array([0.0, 0.1], dtype=np.float32)
@@ -361,6 +369,12 @@ class TestModeOpticsRun(unittest.TestCase):
 
     def test_select_source_timestep_raises_when_numeric_hour_missing(self):
         fields = self._fields_two_times()
+
+        with self.assertRaisesRegex(ValueError, "time.*hour"):
+            mode_optics._select_source_timestep(fields, pd.Timestamp("2020-01-01T06"))
+
+    def test_select_source_timestep_raises_when_datetime_timestamp_missing(self):
+        fields = self._fields_two_datetimes()
 
         with self.assertRaisesRegex(ValueError, "time.*hour"):
             mode_optics._select_source_timestep(fields, pd.Timestamp("2020-01-01T06"))
