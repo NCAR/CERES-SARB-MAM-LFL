@@ -5,6 +5,7 @@ import numpy as np
 import xarray as xr
 
 from mode_external_mix import main, mix_mode_datasets
+from mode_optics import build_mode_output_dataset
 
 
 def mode_dataset(ext, sca, asm, delp=None):
@@ -270,6 +271,125 @@ class TestModeExternalMix(unittest.TestCase):
                 main(["--output", "unused.nc", "first.nc", "second.nc"])
 
         self.assertTrue(opened.closed)
+
+
+class TestModeOutputDataset(unittest.TestCase):
+    def _arrays(self, ext=None, sca=None, asm=None, delp=None):
+        dims = ("lev", "lat", "lon")
+        coords = {
+            "lev": np.array([1000.0, 850.0], dtype=np.float32),
+            "lat": np.array([-45.0], dtype=np.float32),
+            "lon": np.array([0.0], dtype=np.float32),
+        }
+        if ext is None:
+            ext = np.array([[[0.2]], [[0.4]]], dtype=np.float32)
+        if sca is None:
+            sca = np.array([[[0.1]], [[0.3]]], dtype=np.float32)
+        if asm is None:
+            asm = np.array([[[0.7]], [[0.8]]], dtype=np.float32)
+        if delp is None:
+            delp = np.full((2, 1, 1), 100.0, dtype=np.float32)
+
+        return (
+            xr.DataArray(delp, dims=dims, coords=coords),
+            xr.DataArray(ext, dims=dims, coords=coords),
+            xr.DataArray(sca, dims=dims, coords=coords),
+            xr.DataArray(asm, dims=dims, coords=coords),
+        )
+
+    def test_builds_sarb_style_output_with_column_sum_and_attrs(self):
+        delp, tau_ext, tau_sca, asm = self._arrays()
+        attrs = {"scheme": "MAM4", "mode": "a1"}
+
+        ds = build_mode_output_dataset(delp, tau_ext, tau_sca, asm, attrs)
+        attrs["mode"] = "a2"
+
+        self.assertEqual(
+            set(ds.data_vars),
+            {
+                "DELP",
+                "Extinction_Layer_Optical_Depth",
+                "Scattering_Layer_Optical_Depth",
+                "Layer_Asymmetry_Parameter",
+                "Extinction_Column_Optical_Depth",
+            },
+        )
+        for name in ds.data_vars:
+            self.assertEqual(ds[name].dtype, np.float32)
+        self.assertEqual(ds["DELP"].dims, tau_ext.dims)
+        self.assertEqual(ds["Extinction_Layer_Optical_Depth"].dims, tau_ext.dims)
+        np.testing.assert_allclose(ds.coords["lev"].values, tau_ext.coords["lev"].values)
+        np.testing.assert_allclose(
+            ds["Extinction_Column_Optical_Depth"].values,
+            tau_ext.sum("lev").astype(np.float32).values,
+        )
+        self.assertEqual(ds.attrs["scheme"], "MAM4")
+        self.assertEqual(ds.attrs["mode"], "a1")
+
+    def test_scattering_clips_to_nonnegative_and_extinction(self):
+        delp, tau_ext, tau_sca, asm = self._arrays(
+            ext=np.array([[[0.2]], [[0.4]]], dtype=np.float32),
+            sca=np.array([[[-0.1]], [[0.6]]], dtype=np.float32),
+        )
+
+        ds = build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
+        np.testing.assert_allclose(
+            ds["Scattering_Layer_Optical_Depth"].values,
+            np.array([[[0.0]], [[0.4]]], dtype=np.float32),
+        )
+
+    def test_asymmetry_clips_to_unit_interval(self):
+        delp, tau_ext, tau_sca, asm = self._arrays(
+            asm=np.array([[[-1.5]], [[1.5]]], dtype=np.float32),
+        )
+
+        ds = build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
+        np.testing.assert_allclose(
+            ds["Layer_Asymmetry_Parameter"].values,
+            np.array([[[-1.0]], [[1.0]]], dtype=np.float32),
+        )
+
+    def test_rejects_tau_ext_without_lev_dimension(self):
+        dims = ("lat", "lon")
+        coords = {
+            "lat": np.array([-45.0], dtype=np.float32),
+            "lon": np.array([0.0], dtype=np.float32),
+        }
+        delp = xr.DataArray(np.ones((1, 1), dtype=np.float32), dims=dims, coords=coords)
+        tau_ext = xr.DataArray(np.ones((1, 1), dtype=np.float32), dims=dims, coords=coords)
+        tau_sca = xr.DataArray(np.ones((1, 1), dtype=np.float32), dims=dims, coords=coords)
+        asm = xr.DataArray(np.zeros((1, 1), dtype=np.float32), dims=dims, coords=coords)
+
+        with self.assertRaisesRegex(ValueError, "lev"):
+            build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
+
+    def test_rejects_mismatched_dims_or_shapes(self):
+        delp, tau_ext, tau_sca, asm = self._arrays()
+        mismatched_dims = tau_sca.transpose("lat", "lev", "lon")
+        mismatched_shape = xr.DataArray(
+            np.ones((3, 1, 1), dtype=np.float32),
+            dims=("lev", "lat", "lon"),
+            coords={
+                "lev": np.array([1000.0, 850.0, 700.0], dtype=np.float32),
+                "lat": np.array([-45.0], dtype=np.float32),
+                "lon": np.array([0.0], dtype=np.float32),
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "dims"):
+            build_mode_output_dataset(delp, tau_ext, mismatched_dims, asm, {"scheme": "MAM4", "mode": "a1"})
+        with self.assertRaisesRegex(ValueError, "shape"):
+            build_mode_output_dataset(delp, tau_ext, mismatched_shape, asm, {"scheme": "MAM4", "mode": "a1"})
+
+    def test_rejects_negative_extinction(self):
+        delp, tau_ext, tau_sca, asm = self._arrays(
+            ext=np.array([[[-0.2]], [[0.4]]], dtype=np.float32),
+        )
+
+        with self.assertRaisesRegex(ValueError, "tau_ext.*negative"):
+            build_mode_output_dataset(delp, tau_ext, tau_sca, asm, {"scheme": "MAM4", "mode": "a1"})
 
 
 if __name__ == "__main__":
