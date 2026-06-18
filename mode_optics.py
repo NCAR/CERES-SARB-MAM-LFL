@@ -169,6 +169,27 @@ def _resolve_vis_path(path, root, date_str, label, band_label):
     return expanded
 
 
+def _vis_correction_paths(args, source_spec, date_str, label, band_label):
+    external_vis = getattr(args, "external_vis", None)
+    internal_vis = getattr(args, "internal_vis", None)
+
+    if internal_vis is None:
+        if external_vis is not None:
+            raise ValueError("internal VIS total is required when external VIS is provided")
+        return None, None
+
+    external_root = args.datadir
+    if external_vis is None:
+        external_vis = source_spec.get("external_vis_pattern")
+        external_root = args.outdir
+    if external_vis is None:
+        raise ValueError("external VIS path is required when internal VIS is provided")
+
+    external_path = _resolve_vis_path(external_vis, external_root, date_str, label, band_label)
+    internal_path = _resolve_vis_path(internal_vis, args.outdir, date_str, label, band_label)
+    return external_path, internal_path
+
+
 def _factor_for_layer(layer_field, factor):
     expected_dims = tuple(dim for dim in layer_field.dims if dim != "lev")
     if factor.dims == expected_dims:
@@ -503,6 +524,13 @@ def run(args):
     species_names = _mode_species(config, args.scheme, args.mode)
 
     for date_str in _date_strings(args.start, args.end):
+        external_path, internal_path = _vis_correction_paths(
+            args,
+            source_spec,
+            date_str,
+            label,
+            band_label,
+        )
         input_path = _build_path(
             args.datadir,
             source_spec["input_pattern"],
@@ -522,26 +550,9 @@ def run(args):
             args,
             fields,
         )
-        if args.external_vis is not None:
-            external_path = _resolve_vis_path(
-                args.external_vis,
-                args.datadir,
-                date_str,
-                label,
-                band_label,
-            )
+        if internal_path is not None:
             external_column = _read_vis_column(external_path)
-            if getattr(args, "internal_vis", None) is not None:
-                internal_path = _resolve_vis_path(
-                    args.internal_vis,
-                    args.outdir,
-                    date_str,
-                    label,
-                    band_label,
-                )
-                internal_column = _read_vis_column(internal_path)
-            else:
-                internal_column = _column_to_lat_lon(ds[COL])
+            internal_column = _read_vis_column(internal_path)
             ds, _stats = _apply_vis_correction_to_dataset(ds, external_column, internal_column)
         output_path = _build_path(
             args.outdir,

@@ -460,26 +460,18 @@ class TestModeOpticsRun(unittest.TestCase):
         self.assertEqual(ds.attrs["mode"], "a1")
         self.assertEqual(ds.attrs["band"], "SW01")
 
-    def test_run_applies_external_vis_to_current_uncorrected_mode_column(self):
-        written = {}
-        external_column = None
+    def test_run_external_vis_without_internal_vis_raises_value_error(self):
+        current = self._simple_mode_dataset()
+        external_column = xr.DataArray(
+            np.full((1, 1), 2.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": current.coords["lat"], "lon": current.coords["lon"]},
+        )
 
         def fake_open_dataset(path):
-            if path == "mode_sw01_larc.nc":
-                return self._table()
-            if path == "optics_SU.nc":
-                return self._sulfate_refraction()
-            if path == "optics_WAT.nc":
-                return self._water_refraction()
             if path == "external_vis.nc":
-                return xr.Dataset(
-                    {"Extinction_Column_Optical_Depth": external_column.copy(deep=True)}
-                )
+                return xr.Dataset({"Extinction_Column_Optical_Depth": external_column})
             raise AssertionError("unexpected open_dataset path %s" % path)
-
-        def fake_to_netcdf(ds, path):
-            written["path"] = path
-            written["dataset"] = ds.copy(deep=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             args = SimpleNamespace(
@@ -500,41 +492,105 @@ class TestModeOpticsRun(unittest.TestCase):
             fields = self._fields()
 
             with mock.patch("mode_optics.load_config", return_value=config):
-                with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
-                    uncorrected = mode_optics.compute_mode_dataset(
-                        config,
-                        "TEST",
-                        config["Sources"]["TEST"],
-                        "MAMX",
-                        "a1",
-                        "SW01",
-                        args,
-                        fields,
-                    )
-                    external_column = uncorrected["Extinction_Column_Optical_Depth"].isel(
-                        time=0,
-                        drop=True,
-                    ) * np.float32(2.0)
-
                 with mock.patch("mode_optics.open_source_fields", return_value=fields):
-                    with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
-                        with mock.patch.object(xr.Dataset, "to_netcdf", fake_to_netcdf):
-                            result = mode_optics.run(args)
+                    with mock.patch("mode_optics.compute_mode_dataset", return_value=current):
+                        with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                            with self.assertRaisesRegex(ValueError, "internal"):
+                                mode_optics.run(args)
 
+    def test_run_internal_vis_uses_source_external_vis_pattern_default(self):
+        written = {}
+        opened_paths = []
+        current = self._simple_mode_dataset()
+        external_column = xr.DataArray(
+            np.full((1, 1), 4.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": current.coords["lat"], "lon": current.coords["lon"]},
+        )
+        internal_column = xr.DataArray(
+            np.full((1, 1), 2.0, dtype=np.float32),
+            dims=("lat", "lon"),
+            coords={"lat": current.coords["lat"], "lon": current.coords["lon"]},
+        )
+
+        def fake_open_dataset(path):
+            opened_paths.append(path)
+            if path.endswith("external/2020/01/MAMX_a1_SW01.2020-01-01T00.nc"):
+                return xr.Dataset({"Extinction_Column_Optical_Depth": external_column})
+            if path == "internal_total.nc":
+                return xr.Dataset({"Extinction_Column_Optical_Depth": internal_column})
+            raise AssertionError("unexpected open_dataset path %s" % path)
+
+        def fake_to_netcdf(ds, path):
+            written["path"] = path
+            written["dataset"] = ds.copy(deep=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            datadir = os.path.join(tmpdir, "inputroot")
+            outdir = os.path.join(tmpdir, "outroot")
+            args = SimpleNamespace(
+                source="test",
+                scheme="MAMX",
+                mode="a1",
+                band="sw01",
+                wvl=None,
+                start="2020-01-01T00",
+                end="2020-01-01T00",
+                aerosol="unused.yaml",
+                datadir=datadir,
+                outdir=outdir,
+                external_vis=None,
+                internal_vis="internal_total.nc",
+            )
+            config = self._config()
+            source_spec = config["Sources"]["TEST"]
+            source_spec["external_vis_pattern"] = "external/YYYY/MM/{label}_{band}.YYYY-MM-DDTHH.nc"
+            fields = self._fields()
+
+            with mock.patch("mode_optics.load_config", return_value=config):
+                with mock.patch("mode_optics.open_source_fields", return_value=fields):
+                    with mock.patch("mode_optics.compute_mode_dataset", return_value=current):
+                        with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                            with mock.patch.object(xr.Dataset, "to_netcdf", fake_to_netcdf):
+                                result = mode_optics.run(args)
+
+        expected_external = os.path.join(
+            outdir,
+            "external/2020/01/MAMX_a1_SW01.2020-01-01T00.nc",
+        )
         self.assertEqual(result, 0)
-        ds = written["dataset"]
+        self.assertIn(expected_external, opened_paths)
         np.testing.assert_allclose(
-            ds["Extinction_Layer_Optical_Depth"].values,
-            uncorrected["Extinction_Layer_Optical_Depth"].values * 2.0,
+            written["dataset"]["Extinction_Layer_Optical_Depth"].values,
+            current["Extinction_Layer_Optical_Depth"].values * 2.0,
         )
-        np.testing.assert_allclose(
-            ds["Scattering_Layer_Optical_Depth"].values,
-            uncorrected["Scattering_Layer_Optical_Depth"].values * 2.0,
-        )
-        np.testing.assert_allclose(
-            ds["Extinction_Column_Optical_Depth"].isel(time=0, drop=True).values,
-            external_column.values,
-        )
+
+    def test_run_internal_vis_without_external_path_or_default_raises_value_error(self):
+        current = self._simple_mode_dataset()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = SimpleNamespace(
+                source="test",
+                scheme="MAMX",
+                mode="a1",
+                band="sw01",
+                wvl=None,
+                start="2020-01-01T00",
+                end="2020-01-01T00",
+                aerosol="unused.yaml",
+                datadir=tmpdir,
+                outdir=tmpdir,
+                external_vis=None,
+                internal_vis="internal_total.nc",
+            )
+            config = self._config()
+            fields = self._fields()
+
+            with mock.patch("mode_optics.load_config", return_value=config):
+                with mock.patch("mode_optics.open_source_fields", return_value=fields):
+                    with mock.patch("mode_optics.compute_mode_dataset", return_value=current):
+                        with self.assertRaisesRegex(ValueError, "external"):
+                            mode_optics.run(args)
 
     def test_run_uses_explicit_internal_vis_column_for_correction_factor(self):
         written = {}
