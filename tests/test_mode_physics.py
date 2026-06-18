@@ -52,6 +52,18 @@ class TestModePhysics(unittest.TestCase):
         for value in state.values():
             self.assertEqual(value.dtype, np.float32)
 
+    def test_mix_mode_state_includes_water_in_refractive_index_when_wet(self):
+        q = {"SO4": np.full((1,), 1.0, dtype=np.float32)}
+        species_info = {"SO4": {"density": 1.0, "hygroscopicity": [1.0, 0.0, 0.0]}}
+        refractive = {"SO4": (1.8, 0.2), "WAT": (1.33, 0.0)}
+        rh = np.full((1,), 0.8, dtype=np.float32)
+        temperature = np.full((1,), 280.0, dtype=np.float32)
+
+        state = mix_mode_state(species_info, q, refractive, rh, temperature, dry_radius_um=0.05)
+
+        self.assertLess(float(state["n_re"][0]), 1.8)
+        self.assertLess(float(state["n_im"][0]), 0.2)
+
     def test_mix_mode_state_rejects_empty_q(self):
         with self.assertRaisesRegex(ValueError, "q"):
             mix_mode_state({}, {}, {}, np.array([0.5], dtype=np.float32), np.array([280.0], dtype=np.float32), 0.05)

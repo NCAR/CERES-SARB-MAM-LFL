@@ -183,6 +183,13 @@ def mix_mode_state(species_info, q, refractive, rh, temperature, dry_radius_um):
         n_re_num += volume * float(refractive[species][0])
         n_im_num += volume * float(refractive[species][1])
 
+    if "WAT" in refractive:
+        growth = np.maximum((r_w_um / float(dry_radius_um)) ** 3 - 1.0, 0.0).astype(np.float32)
+        water_volume = dry_volume * growth
+        denominator += water_volume
+        n_re_num += water_volume * float(refractive["WAT"][0])
+        n_im_num += water_volume * float(refractive["WAT"][1])
+
     n_re = np.divide(
         n_re_num,
         denominator,
