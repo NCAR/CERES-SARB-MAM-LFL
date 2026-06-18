@@ -13,7 +13,7 @@ from mode_physics import (
     lookup_mode_optics,
     mix_mode_state,
 )
-from source_fields import open_source_fields
+from source_fields import SourceFields, open_source_fields
 from utils import fill_date_hour_template
 
 
@@ -275,6 +275,110 @@ def _dataarray_from_fields(values, fields):
     return xr.DataArray(np.asarray(values, dtype=np.float32), dims=dims, coords=coords)
 
 
+def _timestamp_from_date_str(date_str):
+    year, month, _month_abbr, day, _day_of_year, hour = date_str.split("-")
+    return pd.Timestamp(
+        year=int(year),
+        month=int(month),
+        day=int(day),
+        hour=int(hour),
+    )
+
+
+def _coord_values(coord):
+    if hasattr(coord, "values"):
+        return np.asarray(coord.values)
+    return np.asarray(coord)
+
+
+def _is_datetime_like(values):
+    if np.issubdtype(values.dtype, np.datetime64):
+        return True
+    if np.issubdtype(values.dtype, np.number):
+        return False
+    try:
+        converted = pd.to_datetime(values.ravel(), errors="coerce")
+    except (TypeError, ValueError):
+        return False
+    return bool(len(converted) and not pd.isna(converted).all())
+
+
+def _time_index_for_timestamp(time_coord, timestamp):
+    values = _coord_values(time_coord).ravel()
+    if values.size == 0:
+        raise ValueError("time coordinate is empty for hour %02d" % timestamp.hour)
+
+    if _is_datetime_like(values):
+        converted = pd.to_datetime(values, errors="coerce")
+        target = pd.Timestamp(timestamp)
+        valid = ~pd.isna(converted)
+        if not valid.any():
+            raise ValueError("time coordinate has no datetime values for hour %02d" % timestamp.hour)
+        coord_values = converted.to_numpy(dtype="datetime64[ns]")
+        target_value = np.datetime64(target.to_datetime64(), "ns")
+        diffs = np.full(values.shape, np.inf, dtype=np.float64)
+        diffs[valid] = np.abs(
+            (coord_values[valid] - target_value).astype("timedelta64[ns]").astype(np.int64)
+        )
+        return int(np.argmin(diffs))
+
+    try:
+        numeric = values.astype(np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("time coordinate cannot match hour %02d" % timestamp.hour) from exc
+
+    hour = float(timestamp.hour) + float(timestamp.minute) / 60.0
+    matches = np.flatnonzero(np.isclose(numeric, hour))
+    if matches.size == 0:
+        raise ValueError("time coordinate does not contain hour %02d" % timestamp.hour)
+    return int(matches[0])
+
+
+def _slice_time_array(values, axis, index):
+    return np.take(np.asarray(values), [index], axis=axis)
+
+
+def _slice_time_coords(coords, index):
+    next_coords = {}
+    for name, coord in coords.items():
+        coord_dims = getattr(coord, "dims", ())
+        if "time" in coord_dims and hasattr(coord, "isel"):
+            next_coords[name] = coord.isel({"time": [index]})
+        else:
+            next_coords[name] = coord
+    return next_coords
+
+
+def _select_source_timestep(fields, timestamp):
+    dims = tuple(fields.dims)
+    if "time" not in dims:
+        return fields
+
+    time_axis = dims.index("time")
+    time_size = np.asarray(fields.rh).shape[time_axis]
+    if time_size <= 1:
+        return fields
+
+    time_coord = fields.coords.get("time")
+    if time_coord is None:
+        raise ValueError("time coordinate missing for hour %02d" % timestamp.hour)
+
+    index = _time_index_for_timestamp(time_coord, pd.Timestamp(timestamp))
+    species = {
+        name: _slice_time_array(values, time_axis, index).astype(np.float32)
+        for name, values in fields.species.items()
+    }
+    return SourceFields(
+        dataset=fields.dataset,
+        rh=_slice_time_array(fields.rh, time_axis, index).astype(np.float32),
+        temperature=_slice_time_array(fields.temperature, time_axis, index).astype(np.float32),
+        delp=_slice_time_array(fields.delp, time_axis, index).astype(np.float32),
+        species=species,
+        coords=_slice_time_coords(fields.coords, index),
+        dims=dims,
+    )
+
+
 def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_label, args, fields):
     mode_spec = config["Schemes"][scheme]["modes"][mode]
     species_names = _mode_species(config, scheme, mode)
@@ -347,6 +451,7 @@ def run(args):
             band_label,
         )
         fields = open_source_fields(input_path, source_spec, species_names)
+        fields = _select_source_timestep(fields, _timestamp_from_date_str(date_str))
         ds = compute_mode_dataset(
             config,
             source_key,

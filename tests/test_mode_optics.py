@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 import mode_optics
@@ -173,6 +174,28 @@ class TestModeOpticsRun(unittest.TestCase):
             dims=dims,
         )
 
+    def _fields_two_times(self):
+        dims = ("time", "lev", "lat", "lon")
+        shape = (2, 2, 1, 1)
+        species = np.empty(shape, dtype=np.float32)
+        species[0, :, :, :] = 1.0e-9
+        species[1, :, :, :] = 2.0e-9
+        coords = {
+            "time": xr.DataArray(np.array([0, 3], dtype=np.int32), dims=("time",)),
+            "lev": xr.DataArray(np.array([1000.0, 850.0], dtype=np.float32), dims=("lev",)),
+            "lat": xr.DataArray(np.array([45.0], dtype=np.float32), dims=("lat",)),
+            "lon": xr.DataArray(np.array([270.0], dtype=np.float32), dims=("lon",)),
+        }
+        return SourceFields(
+            dataset=xr.Dataset(),
+            rh=np.full(shape, 0.55, dtype=np.float32),
+            temperature=np.full(shape, 280.0, dtype=np.float32),
+            delp=np.full(shape, 100.0, dtype=np.float32),
+            species={"SO4": species},
+            coords=coords,
+            dims=dims,
+        )
+
     def _table(self):
         n_real = np.array([1.3, 1.5, 1.7], dtype=np.float32)
         n_imag = np.array([0.0, 0.1], dtype=np.float32)
@@ -282,6 +305,65 @@ class TestModeOpticsRun(unittest.TestCase):
         self.assertEqual(ds.attrs["scheme"], "MAMX")
         self.assertEqual(ds.attrs["mode"], "a1")
         self.assertEqual(ds.attrs["band"], "SW01")
+
+    def test_run_selects_single_source_time_for_each_three_hour_output(self):
+        written = []
+
+        def fake_open_dataset(path):
+            if path == "mode_sw01_larc.nc":
+                return self._table()
+            if path == "optics_SU.nc":
+                return self._sulfate_refraction()
+            if path == "optics_WAT.nc":
+                return self._water_refraction()
+            raise AssertionError("unexpected open_dataset path %s" % path)
+
+        def fake_to_netcdf(ds, path):
+            written.append((path, ds.copy(deep=True)))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = SimpleNamespace(
+                source="test",
+                scheme="MAMX",
+                mode="a1",
+                band="sw01",
+                wvl=None,
+                start="2020-01-01T00",
+                end="2020-01-01T03",
+                aerosol="unused.yaml",
+                datadir=tmpdir,
+                outdir=tmpdir,
+                external_vis=None,
+            )
+            config = self._config()
+            config["Sources"]["TEST"]["input_pattern"] = "input/YYYYMMDD.nc"
+            fields = self._fields_two_times()
+
+            with mock.patch("mode_optics.load_config", return_value=config):
+                with mock.patch("mode_optics.open_source_fields", return_value=fields):
+                    with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+                        with mock.patch.object(xr.Dataset, "to_netcdf", fake_to_netcdf):
+                            result = mode_optics.run(args)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(len(written), 2)
+        first_path, first = written[0]
+        second_path, second = written[1]
+        self.assertTrue(first_path.endswith("MAMX_a1_SW01.2020-01-01T00.nc"))
+        self.assertTrue(second_path.endswith("MAMX_a1_SW01.2020-01-01T03.nc"))
+        self.assertEqual(first["Extinction_Layer_Optical_Depth"].shape, (1, 2, 1, 1))
+        self.assertEqual(second["Extinction_Layer_Optical_Depth"].shape, (1, 2, 1, 1))
+        np.testing.assert_array_equal(first.coords["time"].values, np.array([0], dtype=np.int32))
+        np.testing.assert_array_equal(second.coords["time"].values, np.array([3], dtype=np.int32))
+        first_ext = first["Extinction_Layer_Optical_Depth"].values
+        second_ext = second["Extinction_Layer_Optical_Depth"].values
+        self.assertTrue(np.all(second_ext > first_ext))
+
+    def test_select_source_timestep_raises_when_numeric_hour_missing(self):
+        fields = self._fields_two_times()
+
+        with self.assertRaisesRegex(ValueError, "time.*hour"):
+            mode_optics._select_source_timestep(fields, pd.Timestamp("2020-01-01T06"))
 
     def test_compute_mode_dataset_converts_absorption_cross_section_to_layer_tau(self):
         config = self._config()
