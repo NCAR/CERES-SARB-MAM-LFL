@@ -14,6 +14,10 @@ COL = "Extinction_Column_Optical_Depth"
 
 REQUIRED_VARIABLES = (DELP, EXT, SCA, ASM, COL)
 LAYER_VARIABLES = (EXT, SCA, ASM)
+SUPPORTED_LAYER_DIMS = (
+    ("lev", "lat", "lon"),
+    ("time", "lev", "lat", "lon"),
+)
 
 
 def _as_list(datasets):
@@ -29,9 +33,17 @@ def _require_variables(ds, index):
         raise ValueError("dataset %d missing required variable %s" % (index, missing[0]))
 
 
+def _expected_layer_dims(dims):
+    dims = tuple(dims)
+    if dims not in SUPPORTED_LAYER_DIMS:
+        raise ValueError("unsupported dims %s for layer variables" % (dims,))
+    return dims
+
+
 def _validate_dims_shape(ds, index, expected_dims, expected_shape):
     for name in LAYER_VARIABLES:
         da = ds[name]
+        _expected_layer_dims(da.dims)
         if da.dims != expected_dims:
             raise ValueError("dataset %d variable %s dims must match %s" % (index, name, expected_dims))
         if da.shape != expected_shape:
@@ -44,8 +56,24 @@ def _validate_dims_shape(ds, index, expected_dims, expected_shape):
         raise ValueError("dataset %d variable %s shape must match %s" % (index, DELP, expected_shape))
 
 
-def _as_base_grid(da, base):
-    return xr.DataArray(da.data, dims=base.dims, coords=base.coords, attrs=da.attrs)
+def _validate_ext_coords(ds, index, base_ext):
+    ext = ds[EXT]
+    for coord in base_ext.dims:
+        base_has_coord = coord in base_ext.coords
+        has_coord = coord in ext.coords
+        if base_has_coord != has_coord:
+            raise ValueError("dataset %d coord %s must match first dataset" % (index, coord))
+        if not base_has_coord:
+            continue
+        if not np.array_equal(base_ext.coords[coord].values, ext.coords[coord].values):
+            raise ValueError("dataset %d coord %s must match first dataset" % (index, coord))
+
+
+def _validate_delp_values(ds, index, base_delp):
+    if index == 0:
+        return
+    if not np.allclose(ds[DELP].values, base_delp.values):
+        raise ValueError("dataset %d variable %s values must match first dataset" % (index, DELP))
 
 
 def _has_any(condition):
@@ -70,9 +98,8 @@ def mix_mode_datasets(datasets):
 
     first = datasets[0]
     base_ext = first[EXT]
-    if "lev" not in base_ext.dims:
-        raise ValueError("variable %s must include lev dimension" % EXT)
-    expected_dims = base_ext.dims
+    base_delp = first[DELP]
+    expected_dims = _expected_layer_dims(base_ext.dims)
     expected_shape = base_ext.shape
 
     total_ext = xr.zeros_like(base_ext, dtype=np.float32)
@@ -81,9 +108,11 @@ def mix_mode_datasets(datasets):
 
     for index, ds in enumerate(datasets):
         _validate_dims_shape(ds, index, expected_dims, expected_shape)
-        ext = _as_base_grid(ds[EXT], base_ext).astype(np.float32)
-        sca = _as_base_grid(ds[SCA], base_ext).astype(np.float32)
-        asm = _as_base_grid(ds[ASM], base_ext).astype(np.float32)
+        _validate_ext_coords(ds, index, base_ext)
+        _validate_delp_values(ds, index, base_delp)
+        ext = ds[EXT].astype(np.float32)
+        sca = ds[SCA].astype(np.float32)
+        asm = ds[ASM].astype(np.float32)
 
         _validate_optical_depths(ext, sca, index)
 
@@ -102,7 +131,7 @@ def mix_mode_datasets(datasets):
 
     return xr.Dataset(
         {
-            DELP: _as_base_grid(first[DELP], base_ext).astype(np.float32),
+            DELP: first[DELP].astype(np.float32),
             EXT: total_ext,
             SCA: total_sca,
             ASM: layer_asm,
@@ -121,7 +150,8 @@ def main(argv=None):
 
     opened = []
     try:
-        opened = [xr.open_dataset(filename) for filename in args.mode_files]
+        for filename in args.mode_files:
+            opened.append(xr.open_dataset(filename))
         mixed = mix_mode_datasets(opened).load()
         mixed.to_netcdf(args.output)
     finally:
