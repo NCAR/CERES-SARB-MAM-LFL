@@ -1,4 +1,4 @@
-# CERES-SARB-CAM6-LFL
+# CERES-SARB-MAM-LFL
 Python scripts for CAM6 LFL pre-processing.
 
 ## Native-Grid Mode Optics
