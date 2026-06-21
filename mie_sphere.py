@@ -31,6 +31,11 @@ def mie_efficiencies(n_real, n_imag, radius_um, wavelength_um):
 
     The imaginary refractive index is treated as absorbing regardless of sign,
     matching the lookup path that compares against abs(n_imag).
+
+    Reliable up to size parameter x = 2*pi*r/lambda of order ~200; the scipy
+    spherical-Bessel series loses precision (and can return NaN for absorbing
+    particles) at much larger x. Callers that integrate over a size distribution
+    (generate_lut, mie_lognormal) cap or bound x accordingly.
     """
     radius = float(radius_um)
     wavelength = float(wavelength_um)

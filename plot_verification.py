@@ -227,6 +227,75 @@ def fig_mode_integrated(outdir, optics_dir):
 
 
 # --------------------------------------------------------------------------- #
+# Spectral band dependence of the radiative properties (MEE, SSA, asymmetry)
+# --------------------------------------------------------------------------- #
+_SPECIES_FILE = {"SU": "SU.v1_3", "OC": "OC.v1_3", "BC": "BC.v1_3",
+                 "DU": "DU.v15_3", "SS": "SS.v3_3", "NI": "NI.v2_5"}
+_SPECIES_CACHE = {}
+
+
+def _species_index(optics_dir, typ, wl_um):
+    if typ not in _SPECIES_CACHE:
+        ds = xr.open_dataset(os.path.join(optics_dir, "..", "MERRA2", "optics_%s.nc" % _SPECIES_FILE[typ]))
+        lam = np.asarray(ds["lambda"].values, dtype=np.float64) * 1e6
+        nr = np.asarray(ds["refreal"].values, dtype=np.float64)
+        ni = np.abs(np.asarray(ds["refimag"].values, dtype=np.float64))
+        if nr.ndim == 3:
+            nr, ni = nr[0, 0], ni[0, 0]
+        _SPECIES_CACHE[typ] = (lam, nr, ni)
+        ds.close()
+    lam, nr, ni = _SPECIES_CACHE[typ]
+    return float(np.interp(wl_um, lam, nr)), float(np.interp(wl_um, lam, ni))
+
+
+def _band_midpoints(optics_dir):
+    ds = xr.open_dataset(os.path.join(optics_dir, "LFL_bands.nc"))
+    sw = np.asarray(ds["LFL_SW_bands"].values, dtype=np.float64)
+    lw = np.asarray(ds["LFL_LW_bands"].values, dtype=np.float64)
+    ds.close()
+    return np.concatenate([0.5 * (sw[:-1] + sw[1:]), 0.5 * (lw[:-1] + lw[1:])])
+
+
+def fig_spectral_radiative(outdir, optics_dir):
+    mids = _band_midpoints(optics_dir)
+    # (type, label, density g/cm3, representative radius um, sigma_g, color)
+    cases = [
+        ("SU", "sulfate", 1.7, 0.10, 1.8, NCAR["ncar_blue"]),
+        ("OC", "organic", 1.8, 0.10, 1.8, NCAR["green"]),
+        ("BC", "black carbon", 1.0, 0.05, 1.6, NCAR["gray"]),
+        ("DU", "dust", 2.6, 1.40, 1.0, NCAR["orange"]),
+        ("SS", "sea salt", 2.2, 1.00, 1.0, NCAR["aqua"]),
+    ]
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.4))
+    for typ, label, rho, r, sg, color in cases:
+        mee, ssa, asm = [], [], []
+        mean_vol_um3 = (4.0 / 3.0) * np.pi * r ** 3 * np.exp(4.5 * np.log(sg) ** 2)
+        mass_g = rho * mean_vol_um3 * 1e-12            # g/cm3 * (um3 -> cm3) -> g per particle
+        for wl in mids:
+            nr, ni = _species_index(optics_dir, typ, float(wl))
+            cs = (mie_cross_sections_um2(nr, ni, r, float(wl)) if sg <= 1.0
+                  else mode_averaged_cross_sections_um2(nr, ni, r, sg, float(wl)))
+            mee.append((cs["ext"] * 1e-12) / mass_g)   # um2 -> m2, per g  => m2/g
+            ssa.append(cs["sca"] / cs["ext"] if cs["ext"] > 0 else np.nan)
+            asm.append(cs["asymmetry"])
+        ax1.plot(mids, mee, color=color, marker="o", ms=3, label=label)
+        ax2.plot(mids, ssa, color=color, marker="o", ms=3, label=label)
+        ax3.plot(mids, asm, color=color, marker="o", ms=3, label=label)
+    for ax in (ax1, ax2, ax3):
+        ax.set_xscale("log")
+        ax.axvspan(4.0, mids.max() * 1.1, color=NCAR["light_gray"] if "light_gray" in NCAR else "0.92", alpha=0.5)
+        ax.axvline(4.0, color=NCAR["gray"], ls=":", lw=1.0)
+        ax.set_xlabel("wavelength ($\\mu$m)")
+    ax1.set_yscale("log"); ax1.set_ylabel("mass ext. efficiency (m$^2$/g)"); ax1.set_title("(a) extinction")
+    ax2.set_ylabel("single-scattering albedo"); ax2.set_title("(b) SSA"); ax2.set_ylim(0, 1.02)
+    ax3.set_ylabel("asymmetry parameter $g$"); ax3.set_title("(c) asymmetry"); ax3.set_ylim(0, 1.0)
+    ax1.legend(frameon=True, fontsize=9, loc="lower left")
+    fig.suptitle("Spectral radiative properties across the SW (white) and LW (shaded) bands",
+                 fontweight="bold")
+    save(fig, outdir, "spectral_radiative_properties")
+
+
+# --------------------------------------------------------------------------- #
 # AOD by component (where the optical depth comes from)
 # --------------------------------------------------------------------------- #
 def fig_aod_components(outdir):
@@ -345,6 +414,7 @@ def main(argv=None):
     fig_refractive_mixing(args.outdir)
     fig_mie_efficiency(args.outdir)
     fig_mode_integrated(args.outdir, args.optics_dir)
+    fig_spectral_radiative(args.outdir, args.optics_dir)
     fig_aod_components(args.outdir)
     fig_aod_maps(args.outdir)
     fig_scorecard(args.outdir, config)

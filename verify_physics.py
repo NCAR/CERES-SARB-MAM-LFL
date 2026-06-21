@@ -593,6 +593,61 @@ def _g_mono_checks(base, fine, wavelength):
     return results
 
 
+def _g_spectral_checks(base):
+    """Validate LUT absorption (-> SSA) and asymmetry vs mode-integrated Mie across SW+LW bands.
+
+    Homogeneous-sphere Mie (scipy Bessel) is only reliable up to size parameter
+    ~200; generate_lut caps there (X_CAP) and the lognormal-mode reference is only
+    trustworthy where its integration tail stays below that. We therefore validate
+    only where the +N_SIGMA tail keeps x < X_CAP; beyond that the table uses the
+    geometric asymptote by design. The reference integration width matches the
+    generator (N_SIGMA=4).
+    """
+    x_cap, n_sigma = 200.0, 4.0
+    results = []
+    sg = float(base["sigmag"])
+    tail = np.exp(n_sigma * np.log(sg))
+    rad = np.asarray(base["particle_radius"].values, dtype=np.float64)
+    sw = np.asarray(base["LFL_SW_bands"].values, dtype=np.float64)
+    lw = np.asarray(base["LFL_LW_bands"].values, dtype=np.float64)
+    families = [
+        ("sw", 0.5 * (sw[:-1] + sw[1:]), "refindex_real_sw", "refindex_im_sw",
+         "extpsw_mie", "abspsw_mie", "asmpsw", (0, 4, 9, 13)),
+        ("lw", 0.5 * (lw[:-1] + lw[1:]), "refindex_real_lw", "refindex_im_lw",
+         "extplw_mie", "absplw_mie", "asmplw", (0, 3, 7)),
+    ]
+    ssa_dev, asm_dev, n = 0.0, 0.0, 0
+    for _kind, mids, re_name, im_name, ext_name, abs_name, asm_name, bands in families:
+        re_g = np.asarray(base[re_name].values, dtype=np.float64)
+        im_g = np.asarray(base[im_name].values, dtype=np.float64)
+        ext_t = np.asarray(base[ext_name].values, dtype=np.float64)
+        abs_t = np.asarray(base[abs_name].values, dtype=np.float64)
+        asm_t = np.asarray(base[asm_name].values, dtype=np.float64)
+        for b in bands:
+            wl = float(mids[b])
+            for ri in (1, 4):
+                for ii in (0, 4, 8):
+                    for k in (8, 30, 80, 150):
+                        if 2.0 * np.pi * rad[k] * tail / wl > x_cap:
+                            continue  # tail exceeds reliable Mie regime
+                        ext = float(ext_t[b, 0, ii, ri, k])
+                        if ext <= 0:
+                            continue
+                        cs = mode_averaged_cross_sections_um2(
+                            float(re_g[b, ri]), float(im_g[b, ii]), float(rad[k]), sg, wl, n_sigma=n_sigma)
+                        if cs["ext"] <= 0:
+                            continue
+                        ssa_dev = max(ssa_dev, abs((1.0 - float(abs_t[b, 0, ii, ri, k]) / ext)
+                                                   - cs["sca"] / cs["ext"]))
+                        asm_dev = max(asm_dev, abs(float(asm_t[b, 0, ii, ri, k]) - cs["asymmetry"]))
+                        n += 1
+    results.append(Result("G", "spectral SSA vs mode-integrated Mie", n, "max|delta SSA|", ssa_dev, 0.02,
+                          _passfail(ssa_dev, 0.02), "1-abs/ext across SW+LW bands (x<200)"))
+    results.append(Result("G", "spectral asymmetry vs mode-integrated Mie", n, "max|delta g|", asm_dev, 0.05,
+                          _passfail(asm_dev, 0.05), "scattering-weighted g, SW+LW (x<200); quadrature-limited"))
+    return results
+
+
 def stage_g(config):
     results = _validate_mie_reference()
     specs = config["Schemes"]["MAM4"]["modes"]
@@ -610,6 +665,8 @@ def stage_g(config):
         fine = xr.open_dataset(fine_path)
         try:
             results.extend(_g_mode_checks(mode, base, fine, _sw05_wavelength(base)))
+            if mode == "a1":
+                results.extend(_g_spectral_checks(base))
         finally:
             base.close()
             fine.close()
