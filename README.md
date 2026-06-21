@@ -3,6 +3,9 @@ Python scripts for CAM6 LFL pre-processing.
 
 ## Native-Grid Mode Optics
 
+For production GEOS-IT path conventions and the alpha_4 reference workflow, use
+`../CERES-SARB-GEOSIT-LFL` as the companion reference repository.
+
 Compute one internally mixed source-native mode:
 
 ```bash

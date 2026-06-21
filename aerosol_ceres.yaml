@@ -104,7 +104,7 @@ Types:
         plot_color: darkslateblue
     DU:
         name: Dust
-        filename: /CERES/sarb/dfillmor/Optics/MERRA2/optics_DU.v14_2.nc
+        filename: /CERES/sarb/dfillmor/Optics/MERRA2/optics_DU.v15_3.nc
         density: 2.6
         hygroscopicity:
             - 0.14
@@ -122,7 +122,7 @@ Types:
         plot_color: mediumturquoise
     NI:
         name: Nitrate
-        filename: /CERES/sarb/dfillmor/Optics/MERRA2/opticsBands_NI.v2_5.nc
+        filename: /CERES/sarb/dfillmor/Optics/MERRA2/optics_NI.v2_5.nc
         density: 1.7
         hygroscopicity:
             - 2.42848
@@ -137,8 +137,8 @@ Mixtures:
 
 Sources:
     GEOSIT:
-        input_pattern: /CERES/sarb/dfillmor/GEOSIT/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.YYYY-MM-DDTHH00.V01.nc4
-        output_pattern: /CERES/sarb/dfillmor/GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.{label}_{band}.YYYY-MM-DDTHH00.V01.nc4
+        input_pattern: /CERES_prd/GMAO/GEOSIT/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.YYYY-MM-DDTHH00.V01.nc4
+        output_pattern: /CERES/sarb/dfillmor/GEOSIT-MAM/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.{label}_{band}.YYYY-MM-DDTHH00.V01.nc4
         external_vis_pattern: /CERES/sarb/dfillmor/GEOSIT_alpha_4/YYYY/MM/GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294.AER_550NM.YYYY-MM-DDTHH00.V01.nc4
         dims:
             time: time

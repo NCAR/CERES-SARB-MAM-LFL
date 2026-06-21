@@ -224,8 +224,19 @@ def _mode_table_path(mode_spec, args):
     if args.wvl is not None:
         replacement = "%dnm_larc" % int(float(args.wvl))
     else:
-        replacement = "%s_larc" % str(args.band).lower()
+        replacement = "%s_larc" % _table_band_token(args.band)
     return path.replace("larc", replacement, 1)
+
+
+def _table_band_token(band):
+    label = str(band).lower()
+    family = label[:2]
+    if family not in ("sw", "lw"):
+        return label
+    try:
+        return "%s%d" % (family, int(label[2:]))
+    except ValueError:
+        return label
 
 
 def _band_wavelength_um(args, ds_table):
@@ -256,6 +267,10 @@ def _band_wavelength_um(args, ds_table):
     if values.size < 2:
         raise ValueError("%s band %s does not define two bounds" % (variable, label))
     return float(0.5 * (values[0] + values[-1]))
+
+
+def _has_band_limits(ds_table):
+    return "LFL_SW_bands" in ds_table or "LFL_LW_bands" in ds_table
 
 
 def _type_key(species_name):
@@ -472,8 +487,14 @@ def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_lab
 
     table_path = _mode_table_path(mode_spec, args)
     ds_table = xr.open_dataset(table_path)
+    ds_bands = None
     try:
-        wavelength_um = _band_wavelength_um(args, ds_table)
+        if args.wvl is not None or _has_band_limits(ds_table):
+            wavelength_um = _band_wavelength_um(args, ds_table)
+        else:
+            bands_path = os.path.expandvars(config["filename_bands"])
+            ds_bands = xr.open_dataset(bands_path)
+            wavelength_um = _band_wavelength_um(args, ds_bands)
         species_info = _species_info(config, species_names)
         refractive = _refractive_indices(config, species_names, wavelength_um)
         state = mix_mode_state(
@@ -499,6 +520,8 @@ def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_lab
         tau_abs = layer_optical_depth(fields.delp, number, cross_abs)
         tau_sca = np.clip(tau_ext - tau_abs, 0.0, tau_ext).astype(np.float32)
     finally:
+        if ds_bands is not None:
+            ds_bands.close()
         ds_table.close()
 
     attrs = {

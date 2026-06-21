@@ -108,6 +108,29 @@ class TestModeExternalMix(unittest.TestCase):
         self.assertEqual(mixed["Extinction_Layer_Optical_Depth"].dims, first["Extinction_Layer_Optical_Depth"].dims)
         np.testing.assert_allclose(mixed.coords["lev"].values, first.coords["lev"].values)
 
+    def test_mixed_attrs_record_external_mix_and_input_modes(self):
+        first = mode_dataset(
+            ext=np.array([[[[0.2]], [[0.4]]]], dtype=np.float32),
+            sca=np.array([[[[0.1]], [[0.3]]]], dtype=np.float32),
+            asm=np.array([[[[0.5]], [[0.8]]]], dtype=np.float32),
+        )
+        second = mode_dataset(
+            ext=np.array([[[[0.3]], [[0.1]]]], dtype=np.float32),
+            sca=np.array([[[[0.2]], [[0.1]]]], dtype=np.float32),
+            asm=np.array([[[[0.2]], [[0.4]]]], dtype=np.float32),
+        )
+        first.attrs.update({"source": "GEOSIT", "scheme": "MAM4", "mode": "a1", "band": "SW05"})
+        second.attrs.update({"source": "GEOSIT", "scheme": "MAM4", "mode": "a2", "band": "SW05"})
+
+        mixed = mix_mode_datasets([first, second])
+
+        self.assertEqual(mixed.attrs["source"], "GEOSIT")
+        self.assertEqual(mixed.attrs["scheme"], "MAM4")
+        self.assertEqual(mixed.attrs["band"], "SW05")
+        self.assertEqual(mixed.attrs["mode"], "external_mix")
+        self.assertEqual(mixed.attrs["mixed_modes"], "a1,a2")
+        self.assertEqual(mixed.attrs["external_mix_count"], 2)
+
     def test_zero_scattering_returns_zero_asymmetry(self):
         first = mode_dataset(
             ext=np.array([[[[0.2]], [[0.4]]]], dtype=np.float32),

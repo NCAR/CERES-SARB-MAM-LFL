@@ -102,7 +102,7 @@ class TestModeOpticsHelpers(unittest.TestCase):
             6.0,
         )
 
-    def test_mode_table_path_uses_raw_band_or_lowercase_wavelength_label(self):
+    def test_mode_table_path_uses_table_band_token_or_wavelength_label(self):
         mode_spec = {"filename_sarb": "/tables/mam4_mode1_larc_c000002.nc"}
 
         band_path = mode_optics._mode_table_path(
@@ -114,7 +114,7 @@ class TestModeOpticsHelpers(unittest.TestCase):
             SimpleNamespace(wvl=550.0, band=None),
         )
 
-        self.assertEqual(band_path, "/tables/mam4_mode1_sw01_larc_c000002.nc")
+        self.assertEqual(band_path, "/tables/mam4_mode1_sw1_larc_c000002.nc")
         self.assertEqual(wavelength_path, "/tables/mam4_mode1_550nm_larc_c000002.nc")
 
     def test_read_vis_column_returns_lat_lon_column_from_singleton_time(self):
@@ -231,6 +231,7 @@ class TestModeOpticsHelpers(unittest.TestCase):
 class TestModeOpticsRun(unittest.TestCase):
     def _config(self):
         return {
+            "filename_bands": "bands.nc",
             "Types": {
                 "SU": {
                     "density": 1.7,
@@ -331,6 +332,17 @@ class TestModeOpticsRun(unittest.TestCase):
             coords={"n_real": n_real, "n_imag": n_imag, "radius": radius},
         )
 
+    def _mode_table_without_bands(self):
+        table = self._table()
+        return table.drop_vars("LFL_SW_bands")
+
+    def _bands_table(self):
+        return xr.Dataset(
+            {
+                "LFL_SW_bands": (("band", "bound"), np.array([[0.2, 0.9]], dtype=np.float32)),
+            }
+        )
+
     def _sulfate_refraction(self):
         return xr.Dataset(
             {
@@ -391,7 +403,7 @@ class TestModeOpticsRun(unittest.TestCase):
 
         def fake_open_dataset(path):
             opened_paths.append(path)
-            if path == "mode_sw01_larc.nc":
+            if path == "mode_sw1_larc.nc":
                 return self._table()
             if path == "optics_SU.nc":
                 return self._sulfate_refraction()
@@ -438,7 +450,7 @@ class TestModeOpticsRun(unittest.TestCase):
             self.assertEqual(written["path"], expected_output)
 
         ds = written["dataset"]
-        self.assertIn("mode_sw01_larc.nc", opened_paths)
+        self.assertIn("mode_sw1_larc.nc", opened_paths)
         self.assertNotIn("mode_SW01_larc.nc", opened_paths)
         self.assertEqual(
             set(ds.data_vars),
@@ -661,7 +673,7 @@ class TestModeOpticsRun(unittest.TestCase):
         written = []
 
         def fake_open_dataset(path):
-            if path == "mode_sw01_larc.nc":
+            if path == "mode_sw1_larc.nc":
                 return self._table()
             if path == "optics_SU.nc":
                 return self._sulfate_refraction()
@@ -774,6 +786,50 @@ class TestModeOpticsRun(unittest.TestCase):
             ds["Scattering_Layer_Optical_Depth"].values,
             np.full(shape, 20.0, dtype=np.float32),
         )
+
+    def test_compute_mode_dataset_reads_wavelength_from_configured_bands_file(self):
+        config = self._config()
+        fields = self._fields()
+        args = SimpleNamespace(wvl=None, band="sw01")
+        opened = []
+
+        def fake_open_dataset(path):
+            opened.append(path)
+            if path == "mode_sw1_larc.nc":
+                return self._mode_table_without_bands()
+            if path == "bands.nc":
+                return self._bands_table()
+            if path == "optics_SU.nc":
+                return self._sulfate_refraction()
+            if path == "optics_WAT.nc":
+                return self._water_refraction()
+            raise AssertionError("unexpected open_dataset path %s" % path)
+
+        shape = fields.rh.shape
+        with mock.patch("mode_optics.xr.open_dataset", side_effect=fake_open_dataset):
+            with mock.patch(
+                "mode_optics.mix_mode_state",
+                return_value={
+                    "dry_volume": np.ones(shape, dtype=np.float32),
+                    "r_w_um": np.full(shape, 0.05, dtype=np.float32),
+                    "n_re": np.full(shape, 1.5, dtype=np.float32),
+                    "n_im": np.zeros(shape, dtype=np.float32),
+                },
+            ):
+                with mock.patch("mode_optics.derive_number_mixing_ratio", return_value=np.ones(shape, dtype=np.float32)):
+                    ds = mode_optics.compute_mode_dataset(
+                        config,
+                        "TEST",
+                        config["Sources"]["TEST"],
+                        "MAMX",
+                        "a1",
+                        "SW01",
+                        args,
+                        fields,
+                    )
+
+        self.assertIn("bands.nc", opened)
+        self.assertAlmostEqual(ds.attrs["wavelength_um"], 0.55)
 
 
 if __name__ == "__main__":

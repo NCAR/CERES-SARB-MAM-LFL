@@ -96,6 +96,20 @@ def _validate_optical_depths(ext, sca, index):
         raise ValueError("dataset %d variable %s exceeds %s" % (index, SCA, EXT))
 
 
+def _mixed_attrs(datasets):
+    attrs = dict(datasets[0].attrs)
+    modes = [
+        str(ds.attrs.get("mode"))
+        for ds in datasets
+        if ds.attrs.get("mode") is not None
+    ]
+    attrs["mode"] = "external_mix"
+    if modes:
+        attrs["mixed_modes"] = ",".join(modes)
+    attrs["external_mix_count"] = len(datasets)
+    return attrs
+
+
 def mix_mode_datasets(datasets):
     datasets = _as_list(datasets)
     for index, ds in enumerate(datasets):
@@ -147,7 +161,7 @@ def mix_mode_datasets(datasets):
             COL: column_ext,
         },
         coords=first.coords,
-        attrs=first.attrs,
+        attrs=_mixed_attrs(datasets),
     )
 
 
