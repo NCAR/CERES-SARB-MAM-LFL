@@ -67,7 +67,7 @@ if __name__ == '__main__':
     filename_sarb = os.path.expandvars(mode_info['filename_sarb'])
     ds_table = xr.open_dataset(filename_sarb)
     logging.info(ds_table)
-    band_idx = int(mode_info['band'][2]) - 1
+    band_idx = int(mode_info['band'][2:]) - 1
     # mode_idx = int(mode_info['label'][1]) - 1
     mode_idx = 0
     if 'sw' in mode_info['band']:
@@ -151,6 +151,13 @@ if __name__ == '__main__':
 
     ds_fine = xr.Dataset({'ext': da_ext_fine, 'abs': da_abs_fine, 'asm': da_asm_fine},
         coords={'n_real': da_n_real, 'n_imag': da_n_imag, 'radius': da_radius})
+
+    # carry the mode geometry into the fine table so the production lookup can
+    # assert config sigma_g == LUT sigma_g (guards against number/optics desync)
+    for scalar in ('sigmag', 'dgnum', 'dgnumlo', 'dgnumhi'):
+        if scalar in ds_table:
+            ds_fine[scalar] = ((), float(ds_table[scalar]))
+    ds_fine.attrs.update(ds_table.attrs)
 
     filename_fine = filename_sarb.replace('larc', mode_info['band'] + '_larc')
     logging.info(filename_fine)

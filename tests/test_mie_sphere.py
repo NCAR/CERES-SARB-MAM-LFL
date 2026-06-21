@@ -45,6 +45,23 @@ class TestMieSphere(unittest.TestCase):
         self.assertGreater(result["ext"], result["sca"])
         self.assertGreater(result["abs"], 0.0)
 
+    def test_rayleigh_asymmetry_near_zero(self):
+        result = mie_efficiencies(n_real=1.5, n_imag=0.0, radius_um=0.005, wavelength_um=0.55)
+
+        self.assertAlmostEqual(result["asymmetry"], 0.0, delta=0.02)
+
+    def test_large_particle_is_forward_scattering(self):
+        result = mie_efficiencies(n_real=1.5, n_imag=0.0, radius_um=5.0, wavelength_um=0.55)
+
+        self.assertGreater(result["asymmetry"], 0.7)
+        self.assertLess(result["asymmetry"], 1.0)
+
+    def test_asymmetry_in_physical_range(self):
+        for radius in (0.05, 0.2, 1.0, 3.0):
+            result = mie_efficiencies(1.5, 0.01, radius, 0.55)
+            self.assertGreaterEqual(result["asymmetry"], -1.0)
+            self.assertLessEqual(result["asymmetry"], 1.0)
+
     def test_rejects_nonpositive_size_inputs(self):
         with self.assertRaises(ValueError):
             mie_efficiencies(1.5, 0.0, 0.0, 0.55)

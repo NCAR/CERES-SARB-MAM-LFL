@@ -61,10 +61,22 @@ def mie_efficiencies(n_real, n_imag, radius_um, wavelength_um):
     q_ext = (2.0 / x ** 2) * np.sum(weights * np.real(a_n + b_n))
     q_sca = (2.0 / x ** 2) * np.sum(weights * (np.abs(a_n) ** 2 + np.abs(b_n) ** 2))
     q_abs = max(float(q_ext - q_sca), 0.0)
+
+    # asymmetry parameter g (Bohren & Huffman 4.80):
+    # g*q_sca = (4/x^2)[ sum_n n(n+2)/(n+1) Re(a_n a*_{n+1} + b_n b*_{n+1})
+    #                    + sum_n (2n+1)/(n(n+1)) Re(a_n b*_n) ]
+    n = n_values
+    coupling = (n * (n + 2.0) / (n + 1.0))[:-1] * np.real(
+        a_n[:-1] * np.conj(a_n[1:]) + b_n[:-1] * np.conj(b_n[1:])
+    )
+    cross = ((2.0 * n + 1.0) / (n * (n + 1.0))) * np.real(a_n * np.conj(b_n))
+    g_q_sca = (4.0 / x ** 2) * (np.sum(coupling) + np.sum(cross))
+    asymmetry = float(g_q_sca / q_sca) if q_sca > 0.0 else 0.0
     return {
         "q_ext": float(q_ext),
         "q_sca": float(q_sca),
         "q_abs": q_abs,
+        "asymmetry": asymmetry,
         "size_parameter": float(x),
         "series_terms": int(n_values.size),
     }
@@ -80,6 +92,7 @@ def mie_cross_sections_um2(n_real, n_imag, radius_um, wavelength_um):
         "q_ext": efficiencies["q_ext"],
         "q_sca": efficiencies["q_sca"],
         "q_abs": efficiencies["q_abs"],
+        "asymmetry": efficiencies["asymmetry"],
         "size_parameter": efficiencies["size_parameter"],
         "series_terms": efficiencies["series_terms"],
     }

@@ -147,6 +147,54 @@ both the corrected LUT and corrected σ_g** — the arithmetic product is unsafe
 - The exact v2 build bug producing the ~2.5–3.6× factor is not yet located.
 - σ_g-vs-LUT entanglement: only an end-to-end run resolves the true combined bias.
 
+## Fix applied — `c000003.v2`
+
+The base tables were regenerated in-repo from validated Mie
+([`generate_lut.py`](../generate_lut.py)): each `extpsw_mie`/`abspsw_mie`/`asmpsw`
+(and the longwave equivalents) is now the **number-averaged lognormal-mode**
+cross section (`mie_lognormal`) at the **canonical σ_g = 1.8/1.6/1.8/1.6** and the
+band-midpoint wavelength — the quantity `τ = σ·N` requires. `extpsw_scaled`
+keeps the `mie·C/r³` relation (per-mode `C` carried verbatim). Fine per-band
+tables were rebuilt with [`refine_lut.py`](../refine_lut.py), which now also
+writes `sigmag` into each fine table.
+
+Supporting changes:
+- `mie_sphere.py`: added the Mie **asymmetry parameter** `g` (for `asmpsw`/`asmplw`
+  and scattering-weighted mode integration); validated to the Rayleigh (g→0) and
+  forward-scattering (g→~0.8) limits.
+- `mode_optics.py`: **σ_g invariant** — `compute_mode_dataset` asserts
+  `config σ_g == LUT sigmag` when the table carries it, so the number derivation
+  and the optics table can never silently desynchronize again.
+- `aerosol.yaml` / `aerosol_ceres.yaml`: `filename_sarb` → `c000003.v2`
+  (config σ_g was already canonical, so unchanged).
+
+**Verification before → after** (`python verify_physics.py`):
+
+| | c000002.v2 (buggy) | c000003.v2 (fixed) |
+| --- | --- | --- |
+| total | 34 PASS / 0 FAIL / 6 FINDING | **37 PASS / 0 FAIL / 3 FINDING** |
+| C σ_g a1/a3 | FINDING (τ×0.571 / ×0.245) | **PASS** (τ ratio 1.00) |
+| G table = mode-integrated Mie | FINDING (3.85× low) | **PASS** (\|ratio−1\| = 0.5%) |
+| G effective Q_ext | 0.85 (sub-physical) | 4.19 (= 2·e^{2ln²σ}, correct) |
+
+The 3 remaining FINDINGs are all informational and expected: the Köhler Kelvin
+term (stage E), and the monodisperse-ratio / Q_ext context rows (a correct
+mode-integrated table is *larger* than monodisperse Mie). Unit tests: 100 pass.
+
+**Operational note.** The regenerated `.nc` tables live on the data store
+(`~/Data/Optics/SARB` locally; `/CERES/sarb/dfillmor/Optics/SARB` in production),
+not in git. To deploy in production, run on the CERES host:
+
+```bash
+python generate_lut.py --optics-dir /CERES/sarb/dfillmor/Optics/SARB
+# then rebuild each needed fine band, e.g.:
+python refine_lut.py --aerosol aerosol_ceres.yaml --scheme MAM4 --mode a3 --band sw5
+```
+
+Remaining: stage G validates a1 directly (a2–a4 covered by the uniform
+generator); only the SW fine bands present for `c000002.v2` were rebuilt
+(mode1 sw1–9, modes 2–4 sw1/sw5) — regenerate additional bands as needed.
+
 ## Verifier integrity
 
 The 34 passes are not tolerance-gamed: references use an independent float64 /

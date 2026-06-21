@@ -67,17 +67,22 @@ def mode_averaged_cross_sections_um2(
     ext = np.empty_like(radius)
     sca = np.empty_like(radius)
     absn = np.empty_like(radius)
+    g_sca = np.empty_like(radius)
     for index, value in enumerate(radius):
         cross = mie_cross_sections_um2(n_real, n_imag, float(value), wavelength_um)
         ext[index] = cross["ext"]
         sca[index] = cross["sca"]
         absn[index] = cross["abs"]
+        g_sca[index] = cross["asymmetry"] * cross["sca"]
 
     norm = np.trapezoid(weight, ln_r)
+    sca_int = float(np.trapezoid(sca * weight, ln_r))
+    g_mode = float(np.trapezoid(g_sca * weight, ln_r) / sca_int) if sca_int > 0.0 else 0.0
     return {
         "ext": float(np.trapezoid(ext * weight, ln_r) / norm),
-        "sca": float(np.trapezoid(sca * weight, ln_r) / norm),
+        "sca": sca_int / norm,
         "abs": float(np.trapezoid(absn * weight, ln_r) / norm),
+        "asymmetry": g_mode,
         "number_norm": float(norm),
         "n_quad": int(n_quad),
     }

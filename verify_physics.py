@@ -560,15 +560,19 @@ def stage_g(config):
             qeff.append(tab / (np.pi * rad[kk] ** 2))
         mono_ratio = np.array(mono_ratio)
         modeavg_ratio = np.array(modeavg_ratio)
+        # the LUT must store the number-averaged (mode-integrated) cross section
+        # that tau = sigma*N requires; assert it matches at the table's own sigma_g
+        modeavg_dev = abs(float(np.median(modeavg_ratio)) - 1.0)
+        results.append(Result("G", "table = mode-integrated Mie", len(modeavg_ratio),
+                              "|median modeavg/table - 1|", modeavg_dev, 0.1,
+                              _passfail(modeavg_dev, 0.1),
+                              f"sigma_g={table_sg}; physically-required quantity for tau"))
         results.append(Result("G", "table vs monodisperse Mie", len(mono_ratio), "median ratio mono/table",
                               float(np.median(mono_ratio)), 1.0, "FINDING",
-                              f"range {mono_ratio.min():.2f}-{mono_ratio.max():.2f}; table low"))
-        results.append(Result("G", "table vs mode-integrated Mie", len(modeavg_ratio),
-                              "median ratio modeavg/table", float(np.median(modeavg_ratio)), 1.0, "FINDING",
-                              f"sigma_g={table_sg}; physically-required quantity for tau"))
+                              f"range {mono_ratio.min():.2f}-{mono_ratio.max():.2f} (<1: table is the larger mode integral)"))
         results.append(Result("G", "table effective Q_ext", len(qeff), "median Q_eff",
                               float(np.median(qeff)), 2.0, "FINDING",
-                              "table ext/(pi r^2); Mie q_ext ~ 2"))
+                              "mode-integrated ~ 2*exp(2 ln^2 sigma_g); monodisperse Mie ~ 2"))
     finally:
         base.close()
         fine.close()

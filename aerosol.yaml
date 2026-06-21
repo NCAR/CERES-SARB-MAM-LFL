@@ -4,7 +4,7 @@ MAM4:
     a1:
         name: Accumulation
         filename_rrtm: ${HOME}/Data/Optics/MAM4/mam4_mode1_rrtmg_aeronetdust_c141106.nc
-        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode1_larc_c000002.v2.nc
+        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode1_larc_c000003.v2.nc
         types:
             - BC
             - POM
@@ -16,7 +16,7 @@ MAM4:
     a2:
         name: Aitken
         filename_rrtm: ${HOME}/Data/Optics/MAM4/mam4_mode2_rrtmg_aitkendust_c141106.nc
-        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode2_larc_c000002.v2.nc
+        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode2_larc_c000003.v2.nc
         types:
             - SOA
             - SU
@@ -26,7 +26,7 @@ MAM4:
     a3:
         name: Coarse
         filename_rrtm: ${HOME}/Data/Optics/MAM4/mam4_mode3_rrtmg_aeronetdust_c141106.nc
-        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode3_larc_c000002.v2.nc
+        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode3_larc_c000003.v2.nc
         types:
             - SU
             - DU
@@ -34,7 +34,7 @@ MAM4:
     a4:
         name: Primary Carbon
         filename_rrtm: ${HOME}/Data/Optics/MAM4/mam4_mode4_rrtmg_c130628.nc
-        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode4_larc_c000002.v2.nc
+        filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode4_larc_c000003.v2.nc
         types:
             - BC
             - POM
@@ -207,22 +207,22 @@ Schemes:
                 name: Accumulation
                 dry_radius_um: 0.055
                 sigma_g: 1.8
-                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode1_larc_c000002.v2.nc
+                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode1_larc_c000003.v2.nc
             a2:
                 name: Aitken
                 dry_radius_um: 0.012
                 sigma_g: 1.6
-                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode2_larc_c000002.v2.nc
+                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode2_larc_c000003.v2.nc
             a3:
                 name: Coarse
                 dry_radius_um: 0.40
                 sigma_g: 1.8
-                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode3_larc_c000002.v2.nc
+                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode3_larc_c000003.v2.nc
             a4:
                 name: Primary Carbon
                 dry_radius_um: 0.050
                 sigma_g: 1.6
-                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode4_larc_c000002.v2.nc
+                filename_sarb: ${HOME}/Data/Optics/SARB/mam4_mode4_larc_c000003.v2.nc
         allocations:
             SO4: {a1: 0.90, a2: 0.10, a3: 0.00, a4: 0.00}
             OCPHILIC: {a1: 1.00}

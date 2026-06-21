@@ -475,6 +475,23 @@ def _select_source_timestep(fields, timestamp):
     )
 
 
+def _assert_sigma_g_consistent(mode_spec, ds_table):
+    """Number derivation uses the config sigma_g while the optical cross section
+    comes from the LUT; they must describe the same lognormal mode. When the LUT
+    carries its sigma_g (regenerated tables do), require it to match the config.
+    """
+    if "sigmag" not in ds_table:
+        return
+    table_sigma_g = float(ds_table["sigmag"].values)
+    config_sigma_g = float(mode_spec["sigma_g"])
+    if abs(table_sigma_g - config_sigma_g) > 1.0e-6:
+        raise ValueError(
+            "sigma_g mismatch: config %.4g != LUT sigmag %.4g; the number "
+            "derivation and the optics LUT must share the mode width "
+            "(regenerate the LUT or fix the config)" % (config_sigma_g, table_sigma_g)
+        )
+
+
 def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_label, args, fields):
     mode_spec = config["Schemes"][scheme]["modes"][mode]
     species_names = _mode_species(config, scheme, mode)
@@ -489,6 +506,7 @@ def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_lab
     ds_table = xr.open_dataset(table_path)
     ds_bands = None
     try:
+        _assert_sigma_g_consistent(mode_spec, ds_table)
         if args.wvl is not None or _has_band_limits(ds_table):
             wavelength_um = _band_wavelength_um(args, ds_table)
         else:
