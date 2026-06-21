@@ -466,116 +466,110 @@ def _sw05_wavelength(base_ds):
     return float(0.5 * (bands[4] + bands[5]))  # sw05 -> bands[4:6]
 
 
-def stage_g(config):
+def _validate_mie_reference():
+    """G0: confirm the independent Mie reference against analytic limits (mode-independent)."""
     results = []
-    mode = "a1"
-    spec = config["Schemes"]["MAM4"]["modes"][mode]
-    base_path = _path(spec["filename_sarb"])
-    fine_path = base_path.replace("larc", "sw5_larc", 1)
-    if not (os.path.exists(base_path) and os.path.exists(fine_path)):
-        return [Result("G", "optics data present", 0, "-", float("nan"), 0.0, "WARN",
-                       "SARB LUTs missing locally")]
+    ray = mie_efficiencies(1.5, 0.0, 0.005, 0.55)
+    m2 = 1.5 ** 2
+    ray_ref = (8.0 / 3.0) * ray["size_parameter"] ** 4 * abs((m2 - 1.0) / (m2 + 2.0)) ** 2
+    ray_err = abs(ray["q_sca"] - ray_ref) / ray_ref
+    results.append(Result("G", "Mie Rayleigh limit (small x)", 1, "rel err", ray_err, 0.05,
+                          _passfail(ray_err, 0.05), "q_sca vs Rayleigh"))
+    big = [mie_efficiencies(1.5, 0.0, r, 0.55)["q_ext"] for r in (5.0, 10.0, 18.0)]
+    far = max(abs(q - 2.0) for q in big)
+    results.append(Result("G", "Mie geometric limit (large x)", 3, "max|Qext-2|", far, 0.35,
+                          _passfail(far, 0.35), "extinction paradox Qext->2"))
+    nonabs = mie_cross_sections_um2(1.5, 0.0, 0.2, 0.55)
+    absdiff = abs(nonabs["ext"] - nonabs["sca"])
+    results.append(Result("G", "Mie non-absorbing ext=sca", 1, "|ext-sca|", absdiff, 1e-9,
+                          _passfail(absdiff, 1e-9), "no absorption when n_imag=0"))
+    return results
 
-    base = xr.open_dataset(base_path)
-    fine = xr.open_dataset(fine_path)
-    try:
-        wavelength = _sw05_wavelength(base)
-        table_sg = float(base["sigmag"])
 
-        # --- G0: validate the independent Mie reference itself -------------- #
-        ray = mie_efficiencies(1.5, 0.0, 0.005, 0.55)
-        m2 = 1.5 ** 2
-        ray_ref = (8.0 / 3.0) * ray["size_parameter"] ** 4 * abs((m2 - 1.0) / (m2 + 2.0)) ** 2
-        ray_err = abs(ray["q_sca"] - ray_ref) / ray_ref
-        results.append(Result("G", "Mie Rayleigh limit (small x)", 1, "rel err", ray_err, 0.05,
-                              _passfail(ray_err, 0.05), "q_sca vs Rayleigh"))
-        big = [mie_efficiencies(1.5, 0.0, r, 0.55)["q_ext"] for r in (5.0, 10.0, 18.0)]
-        far = max(abs(q - 2.0) for q in big)
-        results.append(Result("G", "Mie geometric limit (large x)", 3, "max|Qext-2|", far, 0.35,
-                              _passfail(far, 0.35), "extinction paradox Qext->2"))
-        nonabs = mie_cross_sections_um2(1.5, 0.0, 0.2, 0.55)
-        absdiff = abs(nonabs["ext"] - nonabs["sca"])
-        results.append(Result("G", "Mie non-absorbing ext=sca", 1, "|ext-sca|", absdiff, 1e-9,
-                              _passfail(absdiff, 1e-9), "no absorption when n_imag=0"))
+def _g_mode_checks(mode, base, fine, wavelength):
+    """G1/G2/G3 for one mode's base + fine sw05 tables."""
+    results = []
+    table_sg = float(base["sigmag"])
+    n_real_c = np.asarray(base["refindex_real_sw"].values[4], dtype=np.float64)
+    n_imag_c = np.asarray(base["refindex_im_sw"].values[4], dtype=np.float64)
+    extp = np.asarray(base["extpsw_mie"].values[4, 0], dtype=np.float64)  # (im, re, radius)
+    n_real_f = np.asarray(fine["n_real"].values, dtype=np.float64)
+    n_imag_f = np.asarray(fine["n_imag"].values, dtype=np.float64)
+    ext_f = np.asarray(fine["ext"].values, dtype=np.float64)              # (n_real, n_imag, radius)
 
-        # --- G1: fine LUT reproduces base-table Mie interpolation ----------- #
-        n_real_c = np.asarray(base["refindex_real_sw"].values[4], dtype=np.float64)
-        n_imag_c = np.asarray(base["refindex_im_sw"].values[4], dtype=np.float64)
-        extp = np.asarray(base["extpsw_mie"].values[4, 0], dtype=np.float64)  # (im, re, radius)
-        n_real_f = np.asarray(fine["n_real"].values, dtype=np.float64)
-        n_imag_f = np.asarray(fine["n_imag"].values, dtype=np.float64)
-        ext_f = np.asarray(fine["ext"].values, dtype=np.float64)             # (n_real, n_imag, radius)
-        radii_idx = [20, 60, 120, 200, 300]
-        re_idx = [10, 40, 70, 95]
-        im_idx = [0, 15, 45, 80]
-        worst = 0.0
-        cnt = 0
-        for k in radii_idx:
-            interp = RegularGridInterpolator((n_imag_c, n_real_c), extp[:, :, k],
-                                             bounds_error=False, fill_value=None)
-            for ir in re_idx:
-                for ii in im_idx:
-                    ref = float(interp([[n_imag_f[ii], n_real_f[ir]]])[0])
-                    got = float(ext_f[ir, ii, k])
-                    worst = max(worst, abs(got - ref) / max(abs(ref), 1e-12))
-                    cnt += 1
-        results.append(Result("G", "fine LUT reproduces base interp", cnt, "max rel err", worst, 2e-3,
-                              _passfail(worst, 2e-3), "refine_lut RegularGridInterpolator"))
+    # G1: fine LUT reproduces base-table Mie interpolation
+    worst, cnt = 0.0, 0
+    for k in (20, 60, 120, 200, 300):
+        interp = RegularGridInterpolator((n_imag_c, n_real_c), extp[:, :, k],
+                                         bounds_error=False, fill_value=None)
+        for ir in (10, 40, 70, 95):
+            for ii in (0, 15, 45, 80):
+                ref = float(interp([[n_imag_f[ii], n_real_f[ir]]])[0])
+                worst = max(worst, abs(float(ext_f[ir, ii, k]) - ref) / max(abs(ref), 1e-12))
+                cnt += 1
+    results.append(Result("G", "%s fine LUT reproduces base interp" % mode, cnt, "max rel err", worst, 2e-3,
+                          _passfail(worst, 2e-3), "refine_lut RegularGridInterpolator"))
 
-        # --- G2: lookup_mode_optics indexing reproduces direct table lookup - #
-        m = 1500
-        nre = RNG.uniform(n_real_f[0], n_real_f[-1], m).astype(np.float32)
-        nim = RNG.uniform(0.0, n_imag_f[-1], m).astype(np.float32)
-        rw = RNG.uniform(fine["radius"].values[0], fine["radius"].values[-1], m).astype(np.float32)
-        got_ext, got_abs, got_asm = lookup_mode_optics(nre, nim, rw, fine)
-        ire = np.clip(np.searchsorted(n_real_f, nre, side="right") - 1, 0, len(n_real_f) - 1)
-        iim = np.clip(np.searchsorted(n_imag_f, np.abs(nim), side="right") - 1, 0, len(n_imag_f) - 1)
-        rad_f = np.asarray(fine["radius"].values, dtype=np.float64)
-        irw = np.clip(np.searchsorted(rad_f, rw, side="right") - 1, 0, len(rad_f) - 1)
-        direct = ext_f[ire, iim, irw]
-        idx_err = _max_finite(np.abs(got_ext.astype(np.float64) - direct))
-        results.append(Result("G", "lookup floor-bin/|n_im|/clip exact", m, "max|delta|", idx_err, 1e-6,
-                              _passfail(idx_err, 1e-6), "lower-bin index into fine LUT"))
+    # G2: lookup_mode_optics indexing reproduces direct table lookup
+    m = 1200
+    nre = RNG.uniform(n_real_f[0], n_real_f[-1], m).astype(np.float32)
+    nim = RNG.uniform(0.0, n_imag_f[-1], m).astype(np.float32)
+    rw = RNG.uniform(fine["radius"].values[0], fine["radius"].values[-1], m).astype(np.float32)
+    got_ext, _got_abs, _got_asm = lookup_mode_optics(nre, nim, rw, fine)
+    ire = np.clip(np.searchsorted(n_real_f, nre, side="right") - 1, 0, len(n_real_f) - 1)
+    iim = np.clip(np.searchsorted(n_imag_f, np.abs(nim), side="right") - 1, 0, len(n_imag_f) - 1)
+    rad_f = np.asarray(fine["radius"].values, dtype=np.float64)
+    irw = np.clip(np.searchsorted(rad_f, rw, side="right") - 1, 0, len(rad_f) - 1)
+    idx_err = _max_finite(np.abs(got_ext.astype(np.float64) - ext_f[ire, iim, irw]))
+    results.append(Result("G", "%s lookup floor-bin/|n_im|/clip exact" % mode, m, "max|delta|", idx_err, 1e-6,
+                          _passfail(idx_err, 1e-6), "lower-bin index into fine LUT"))
 
-        # --- G3: physics gap, table vs independent Mie --------------------- #
-        # representative accumulation-mode optical state: n_re~1.5, weakly absorbing
-        i_re = int(np.argmin(np.abs(n_real_f - 1.5)))
-        i_im = 0
-        rad = np.asarray(fine["radius"].values, dtype=np.float64)
-        sel = (rad >= 0.05) & (rad <= 10.0)
-        sample = np.linspace(rad[sel][0], rad[sel][-1], 28)
-        mono_ratio = []
-        modeavg_ratio = []
-        qeff = []
-        for r in sample:
-            kk = int(np.argmin(np.abs(rad - r)))
-            tab = float(ext_f[i_re, i_im, kk])
-            if tab <= 0:
-                continue
-            mono = mie_cross_sections_um2(float(n_real_f[i_re]), 0.0, float(rad[kk]), wavelength)["ext"]
-            avg = mode_averaged_cross_sections_um2(float(n_real_f[i_re]), 0.0, float(rad[kk]),
-                                                   table_sg, wavelength)["ext"]
-            mono_ratio.append(mono / tab)
-            modeavg_ratio.append(avg / tab)
-            qeff.append(tab / (np.pi * rad[kk] ** 2))
-        mono_ratio = np.array(mono_ratio)
-        modeavg_ratio = np.array(modeavg_ratio)
-        # the LUT must store the number-averaged (mode-integrated) cross section
-        # that tau = sigma*N requires; assert it matches at the table's own sigma_g
-        modeavg_dev = abs(float(np.median(modeavg_ratio)) - 1.0)
-        results.append(Result("G", "table = mode-integrated Mie", len(modeavg_ratio),
-                              "|median modeavg/table - 1|", modeavg_dev, 0.1,
-                              _passfail(modeavg_dev, 0.1),
-                              f"sigma_g={table_sg}; physically-required quantity for tau"))
-        results.append(Result("G", "table vs monodisperse Mie", len(mono_ratio), "median ratio mono/table",
-                              float(np.median(mono_ratio)), 1.0, "FINDING",
-                              f"range {mono_ratio.min():.2f}-{mono_ratio.max():.2f} (<1: table is the larger mode integral)"))
-        results.append(Result("G", "table effective Q_ext", len(qeff), "median Q_eff",
-                              float(np.median(qeff)), 2.0, "FINDING",
-                              "mode-integrated ~ 2*exp(2 ln^2 sigma_g); monodisperse Mie ~ 2"))
-    finally:
-        base.close()
-        fine.close()
+    # G3: table must equal the number-averaged (mode-integrated) Mie at its own sigma_g
+    i_re = int(np.argmin(np.abs(n_real_f - 1.5)))
+    rad = np.asarray(fine["radius"].values, dtype=np.float64)
+    sel = (rad >= 0.05) & (rad <= 10.0)
+    sample = np.linspace(rad[sel][0], rad[sel][-1], 24)
+    modeavg_ratio, qeff = [], []
+    for r in sample:
+        kk = int(np.argmin(np.abs(rad - r)))
+        tab = float(ext_f[i_re, 0, kk])
+        if tab <= 0:
+            continue
+        avg = mode_averaged_cross_sections_um2(float(n_real_f[i_re]), 0.0, float(rad[kk]),
+                                               table_sg, wavelength)["ext"]
+        modeavg_ratio.append(avg / tab)
+        qeff.append(tab / (np.pi * rad[kk] ** 2))
+    modeavg_ratio = np.array(modeavg_ratio)
+    dev = abs(float(np.median(modeavg_ratio)) - 1.0)
+    results.append(Result("G", "%s table = mode-integrated Mie" % mode, len(modeavg_ratio),
+                          "|median modeavg/table - 1|", dev, 0.1, _passfail(dev, 0.1),
+                          "sigma_g=%g; tau=sigma*N requires this" % table_sg))
+    results.append(Result("G", "%s effective Q_ext" % mode, len(qeff), "median Q_eff",
+                          float(np.median(qeff)), 2.0, "FINDING",
+                          "mode-integrated ~ 2*exp(2 ln^2 %g)" % table_sg))
+    return results
+
+
+def stage_g(config):
+    results = _validate_mie_reference()
+    specs = config["Schemes"]["MAM4"]["modes"]
+    for mode in ("a1", "a2", "a3", "a4"):
+        spec = specs.get(mode)
+        if spec is None:
+            continue
+        base_path = _path(spec["filename_sarb"])
+        fine_path = base_path.replace("larc", "sw5_larc", 1)
+        if not (os.path.exists(base_path) and os.path.exists(fine_path)):
+            results.append(Result("G", "%s optics data present" % mode, 0, "-", float("nan"), 0.0,
+                                  "WARN", "SARB LUTs missing locally"))
+            continue
+        base = xr.open_dataset(base_path)
+        fine = xr.open_dataset(fine_path)
+        try:
+            results.extend(_g_mode_checks(mode, base, fine, _sw05_wavelength(base)))
+        finally:
+            base.close()
+            fine.close()
     return results
 
 
