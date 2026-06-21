@@ -52,10 +52,15 @@ def _lognormal_pdf(radius_um, median_um, sigma_g):
 
 
 def allocate_size_bins_to_modes(bin_radii_um, mode_specs):
+    # Only lognormal modes (sigma_g > 1) are valid targets; monodisperse
+    # single-species bin-modes (sigma_g = 1) are not allocation destinations.
+    lognormal_modes = {
+        mode: spec for mode, spec in mode_specs.items() if float(spec["sigma_g"]) > 1.0
+    }
     allocation = []
     for radius in np.asarray(bin_radii_um, dtype=np.float64):
         weights = {}
-        for mode, spec in mode_specs.items():
+        for mode, spec in lognormal_modes.items():
             weights[mode] = float(_lognormal_pdf(radius, spec["dry_radius_um"], spec["sigma_g"]))
         allocation.append(normalize_allocations(weights))
     return allocation

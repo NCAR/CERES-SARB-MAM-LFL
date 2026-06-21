@@ -88,7 +88,9 @@ class TestModeConfig(unittest.TestCase):
 class TestYamlSchema(unittest.TestCase):
     REQUIRED_FIELDS = {"rh", "temperature", "delp", "ps"}
     REQUIRED_MODES = {"a1", "a2", "a3", "a4"}
-    REQUIRED_SIZE_BINS = {"NO3AN", "SS", "DU"}
+    # dust and sea salt are bin-resolved as external modes; only nitrate stays a size_bin
+    REQUIRED_SIZE_BINS = {"NO3AN"}
+    BIN_MODES = {"du1", "du2", "du3", "du4", "du5", "ss1", "ss2", "ss3", "ss4", "ss5"}
 
     def assert_native_grid_schema(self, config):
         self.assertIn("Sources", config)
@@ -115,6 +117,15 @@ class TestYamlSchema(unittest.TestCase):
             self.assertIn("species", size_bin)
             self.assertIn("radii_um", size_bin)
             self.assertEqual(len(size_bin["species"]), len(size_bin["radii_um"]))
+
+        # dust/sea-salt are external, bin-resolved, monodisperse modes
+        self.assertLessEqual(self.BIN_MODES, set(scheme["modes"]))
+        allocations = scheme["allocations"]
+        for species, mode in (("DU001", "du1"), ("DU005", "du5"), ("SS001", "ss1"), ("SS005", "ss5")):
+            self.assertEqual(allocations[species], {mode: 1.00})
+        for mode in self.BIN_MODES:
+            self.assertEqual(scheme["modes"][mode]["sigma_g"], 1.0)
+            self.assertIn("mam4_mono_larc", scheme["modes"][mode]["filename_sarb"])
 
     def config_strings(self, value):
         if isinstance(value, str):

@@ -49,17 +49,18 @@ _W = {}            # per-worker shared state (set by _init_worker)
 # --------------------------------------------------------------------------- #
 # Worker (top-level for the 'spawn' start method)
 # --------------------------------------------------------------------------- #
-def _init_worker(radius_grid, medians, mode_sigmas):
+def _init_worker(radius_grid, medians, mode_sigmas, monodisperse=False):
     _W["radius"] = radius_grid
     _W["medians"] = medians
     _W["mode_sigmas"] = mode_sigmas
+    _W["monodisperse"] = monodisperse
     _W["lnr"] = np.log(radius_grid)
     _W["dlnr"] = np.gradient(np.log(radius_grid))
 
 
-def _mie_curve(wavelength_um, n_real, n_imag):
-    """Per-particle ext, sca, g*sca (um^2) on the shared radius grid."""
-    radius = _W["radius"]
+def _mie_curve(wavelength_um, n_real, n_imag, radius=None):
+    """Per-particle ext, sca, g*sca (um^2) on a radius grid (default the shared grid)."""
+    radius = _W["radius"] if radius is None else radius
     x = 2.0 * np.pi * radius / wavelength_um
     ext = np.empty_like(radius)
     sca = np.empty_like(radius)
@@ -98,6 +99,12 @@ def _integrate(ext, sca, gsca):
 
 def _worker(task):
     kind, b, re_idx, im_idx, wavelength, n_real, n_imag = task
+    if _W.get("monodisperse"):
+        # single-particle Mie evaluated directly at each table radius (no integration)
+        ext, sca, gsca = _mie_curve(wavelength, n_real, n_imag, _W["medians"])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            asm = np.where(sca > 0.0, gsca / sca, 0.0)
+        return kind, b, re_idx, im_idx, {"mono": (ext, np.maximum(ext - sca, 0.0), asm)}
     ext, sca, gsca = _mie_curve(wavelength, n_real, n_imag)
     return kind, b, re_idx, im_idx, _integrate(ext, sca, gsca)
 
@@ -150,10 +157,10 @@ def _accumulate(results, shapes, modes, n_radius):
     return store
 
 
-def _build_dataset(template, mode, store, radius):
+def _build_dataset(template, mode, store, radius, sigma_g, scaled_c):
     sw_dims = ("sw_band", "mode", "refindex_im", "refindex_real", "radii_number")
     lw_dims = ("lw_band", "mode", "refindex_im", "refindex_real", "radii_number")
-    c = SCALED_C[mode]
+    c = scaled_c
     r3 = (radius ** 3)[None, None, None, None, :]
 
     def scaled(mie):
@@ -180,21 +187,24 @@ def _build_dataset(template, mode, store, radius):
         data[name] = (template[name].dims, template[name].values)
 
     ds = xr.Dataset(data)
-    ds["sigmag"] = ((), np.float64(CANONICAL_SIGMA_G[mode]))
-    for src, dst in (("extpsw_mie", "extpsw_mie"),):
-        ds[dst].attrs.update(template[src].attrs)
+    ds["sigmag"] = ((), np.float64(sigma_g))
     for name in template.data_vars:
         if name in ds and template[name].attrs:
             ds[name].attrs.update(template[name].attrs)
     ds["sigmag"].attrs.update(template["sigmag"].attrs)
+    monodisperse = mode == "mono"
+    basis = ("monodisperse single-particle Mie (sigma_g=1.0)" if monodisperse
+             else "number-averaged over lognormal mode (sigma_g=%.2f)" % sigma_g)
     ds.attrs.update({
-        "history": "%s generate_lut.py: number-averaged homogeneous-sphere Mie, canonical sigma_g" %
-                   datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": "mie_sphere.py (homogeneous sphere) + mie_lognormal lognormal-mode integration",
-        "mie_basis": "number-averaged over lognormal mode (sigma_g=%.2f)" % CANONICAL_SIGMA_G[mode],
+        "history": "%s generate_lut.py: %s homogeneous-sphere Mie" %
+                   (datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "monodisperse" if monodisperse else "number-averaged"),
+        "source": "mie_sphere.py (homogeneous sphere)" +
+                  ("" if monodisperse else " + mie_lognormal lognormal-mode integration"),
+        "mie_basis": basis,
         "wavelength_convention": "band midpoint of LFL_SW_bands / LFL_LW_bands",
         "predecessor": "c000002.v2 (extpsw_mie ~2.5-3.6x low; sigmag narrowed for modes 1,3)",
-        "note": "dgnum carried from c000002.v2; sigmag corrected to canonical MAM4",
+        "note": "dgnum carried from c000002.v2 template; sigmag set per mode/bin",
     })
     return ds
 
@@ -234,6 +244,8 @@ def main(argv=None):
     parser.add_argument("--out-suffix", default="c000003.v2")
     parser.add_argument("--processes", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     parser.add_argument("--check", action="store_true", help="validate vs mie_lognormal, no write")
+    parser.add_argument("--monodisperse", action="store_true",
+                        help="single-particle Mie at each radius (sigma_g=1.0); write one mam4_mono table")
     args = parser.parse_args(argv)
 
     template_path = os.path.join(args.optics_dir, "mam4_mode1_larc_%s.nc" % args.template_suffix)
@@ -246,22 +258,30 @@ def main(argv=None):
         return 0
 
     tasks, shapes = _build_tasks(template)
-    print("nodes: %d  radius-grid: %d  modes: %s  processes: %d"
-          % (len(tasks), radius_grid.size, args.modes, args.processes))
+    modes = ["mono"] if args.monodisperse else list(args.modes)
+    print("nodes: %d  radius-grid: %d  monodisperse: %s  modes: %s  processes: %d"
+          % (len(tasks), radius_grid.size, args.monodisperse, modes, args.processes))
 
     import multiprocessing as mp
     ctx = mp.get_context("spawn")
     with ctx.Pool(processes=args.processes, initializer=_init_worker,
-                  initargs=(radius_grid, medians, CANONICAL_SIGMA_G)) as pool:
+                  initargs=(radius_grid, medians, CANONICAL_SIGMA_G, args.monodisperse)) as pool:
         results = []
         for k, res in enumerate(pool.imap_unordered(_worker, tasks, chunksize=8)):
             results.append(res)
             if (k + 1) % 200 == 0:
                 print("  %d / %d nodes" % (k + 1, len(tasks)), flush=True)
 
-    store = _accumulate(results, shapes, set(args.modes), medians.size)
+    store = _accumulate(results, shapes, set(modes), medians.size)
+    if args.monodisperse:
+        ds = _build_dataset(template, "mono", store, medians, 1.0, SCALED_C[1])
+        out_path = os.path.join(args.optics_dir, "mam4_mono_larc_%s.nc" % args.out_suffix)
+        ds.to_netcdf(out_path)
+        col = float(ds["extpsw_mie"].values[4, 0, 0, 1, 200] / (np.pi * medians[200] ** 2))
+        print("wrote %s  (monodisperse sigma_g=1.0, sample Q_eff=%.3f)" % (out_path, col))
+        return 0
     for mode in args.modes:
-        ds = _build_dataset(template, mode, store, medians)
+        ds = _build_dataset(template, mode, store, medians, CANONICAL_SIGMA_G[mode], SCALED_C[mode])
         out_path = os.path.join(args.optics_dir, "mam4_mode%d_larc_%s.nc" % (mode, args.out_suffix))
         ds.to_netcdf(out_path)
         col = float(ds["extpsw_mie"].values[4, 0, 0, 1, 200] / (np.pi * medians[200] ** 2))

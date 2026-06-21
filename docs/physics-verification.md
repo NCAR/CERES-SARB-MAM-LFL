@@ -198,6 +198,38 @@ Locally the full fine set is rebuilt: **all 14 SW + 12 LW bands for every mode
 a1 directly; a2–a4 share the uniform generator and were spot-checked against the
 independent reference (SW and LW) to <0.2%.
 
+## Bin-resolved dust and sea salt (external, monodisperse)
+
+Collapsing GEOS-IT's resolved coarse dust/sea-salt bins into a single internally
+mixed mode (median dry radius 0.40 µm, σ_g = 1.8) made the coarse mode ~2× too
+bright. Dust and sea salt are therefore treated **bin-resolved and externally
+mixed**, like the alpha_4 reference: each of the 5 DU + 5 SS bins is its own
+external population at its own radius (`du1`–`du5`, `ss1`–`ss5` in the config),
+removed from the internal modes a1–a4 (which keep only sulfate, carbon, SOA,
+nitrate). Each bin is **monodisperse** (σ_g = 1.0): its cross section is
+single-particle Mie at the bin's hygroscopically-grown radius, from a dedicated
+monodisperse LUT (`mam4_mono_larc_c000003.v2.nc`, `generate_lut.py --monodisperse`,
+`Q_eff ≈ 2.07`). Stage G validates this LUT (`mono table = single-particle Mie`).
+
+### End-to-end single-slice validation (GEOS-IT 2008-07-01T00, SW05)
+
+Area-weighted global-mean column AOD versus the alpha_4 external-species reference
+(0.1437), as the optics representation was corrected:
+
+| MAM configuration | AOD | vs alpha_4 |
+| --- | ---: | ---: |
+| `c000002.v2` (buggy LUT + σ_g drift) | 0.0399 | 0.28× (3.6× low) |
+| `c000003.v2`, modes collapsed | 0.277 | 1.93× |
+| **`c000003.v2`, dust/sea-salt bin-resolved** | **0.189** | **1.32×** |
+
+Bin-resolving removes the coarse-mode overshoot (a3 drops 0.252 → 0.005; dust and
+sea salt are now carried bin-by-bin: dust 0.043, sea salt 0.116). The residual
+~32% is dominated by sea salt (ss3, the 1 µm bin) and reflects optical-model
+differences between this Mie + Köhler path and alpha_4's precomputed per-bin GOCART
+optics (hygroscopic growth, per-bin effective radius) — a cross-model difference,
+not a chain error. Temperature defaulted to 273.15 K when the aerosol file lacks
+`T`; real (warmer) values would raise sea-salt growth slightly, not reduce it.
+
 ## Verifier integrity
 
 The 34 passes are not tolerance-gamed: references use an independent float64 /

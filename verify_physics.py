@@ -550,6 +550,47 @@ def _g_mode_checks(mode, base, fine, wavelength):
     return results
 
 
+def _g_mono_checks(base, fine, wavelength):
+    """Validate the monodisperse LUT (bin-resolved dust/sea-salt) = single-particle Mie."""
+    results = []
+    n_real_c = np.asarray(base["refindex_real_sw"].values[4], dtype=np.float64)
+    n_imag_c = np.asarray(base["refindex_im_sw"].values[4], dtype=np.float64)
+    extp = np.asarray(base["extpsw_mie"].values[4, 0], dtype=np.float64)  # (im, re, radius)
+    n_real_f = np.asarray(fine["n_real"].values, dtype=np.float64)
+    n_imag_f = np.asarray(fine["n_imag"].values, dtype=np.float64)
+    ext_f = np.asarray(fine["ext"].values, dtype=np.float64)
+    rad = np.asarray(fine["radius"].values, dtype=np.float64)
+
+    worst, cnt = 0.0, 0
+    for k in (20, 60, 120, 200, 300):
+        interp = RegularGridInterpolator((n_imag_c, n_real_c), extp[:, :, k],
+                                         bounds_error=False, fill_value=None)
+        for ir in (10, 40, 70, 95):
+            for ii in (0, 15, 45, 80):
+                ref = float(interp([[n_imag_f[ii], n_real_f[ir]]])[0])
+                worst = max(worst, abs(float(ext_f[ir, ii, k]) - ref) / max(abs(ref), 1e-12))
+                cnt += 1
+    results.append(Result("G", "mono fine LUT reproduces base interp", cnt, "max rel err", worst, 2e-3,
+                          _passfail(worst, 2e-3), "refine_lut RegularGridInterpolator"))
+
+    # base table = single-particle Mie at its coarse nodes (im=0), below the X_CAP asymptote
+    devs, qeff = [], []
+    for ir in (1, 3, 5):
+        for k in (10, 80, 180):
+            tab = float(extp[0, ir, k])
+            if tab <= 0:
+                continue
+            mono = mie_cross_sections_um2(float(n_real_c[ir]), 0.0, float(rad[k]), wavelength)["ext"]
+            devs.append(abs(tab - mono) / mono)
+            qeff.append(tab / (np.pi * rad[k] ** 2))
+    worst_mono = float(np.max(devs))
+    results.append(Result("G", "mono table = single-particle Mie", len(devs), "max rel err", worst_mono, 5e-3,
+                          _passfail(worst_mono, 5e-3), "sigma_g=1.0; bin-resolved dust/sea-salt"))
+    results.append(Result("G", "mono effective Q_ext", len(qeff), "median Q_eff",
+                          float(np.median(qeff)), 2.0, "FINDING", "single-particle Mie ~ 2"))
+    return results
+
+
 def stage_g(config):
     results = _validate_mie_reference()
     specs = config["Schemes"]["MAM4"]["modes"]
@@ -570,6 +611,20 @@ def stage_g(config):
         finally:
             base.close()
             fine.close()
+
+    # monodisperse LUT used by the bin-resolved dust/sea-salt modes
+    bin_spec = specs.get("du1")
+    if bin_spec is not None:
+        mono_base = _path(bin_spec["filename_sarb"])
+        mono_fine = mono_base.replace("larc", "sw5_larc", 1)
+        if os.path.exists(mono_base) and os.path.exists(mono_fine):
+            base = xr.open_dataset(mono_base)
+            fine = xr.open_dataset(mono_fine)
+            try:
+                results.extend(_g_mono_checks(base, fine, _sw05_wavelength(base)))
+            finally:
+                base.close()
+                fine.close()
     return results
 
 

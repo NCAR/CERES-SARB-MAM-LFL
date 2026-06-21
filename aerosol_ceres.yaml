@@ -38,6 +38,10 @@ MAM4:
         types:
             - BC
             - POM
+    # monodisperse base table for bin-resolved dust/sea-salt; used by refine_lut
+    mono:
+        name: Monodisperse bins
+        filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc
 
 Types:
     WAT:
@@ -223,6 +227,18 @@ Schemes:
                 dry_radius_um: 0.050
                 sigma_g: 1.6
                 filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mode4_larc_c000003.v2.nc
+            # Externally-mixed, bin-resolved dust and sea salt (monodisperse at the
+            # bin radius). sigma_g=1.0 selects the monodisperse LUT.
+            du1: {name: Dust bin 1, dry_radius_um: 0.73, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            du2: {name: Dust bin 2, dry_radius_um: 1.40, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            du3: {name: Dust bin 3, dry_radius_um: 2.40, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            du4: {name: Dust bin 4, dry_radius_um: 4.50, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            du5: {name: Dust bin 5, dry_radius_um: 8.00, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            ss1: {name: Sea salt bin 1, dry_radius_um: 0.08, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            ss2: {name: Sea salt bin 2, dry_radius_um: 0.30, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            ss3: {name: Sea salt bin 3, dry_radius_um: 1.00, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            ss4: {name: Sea salt bin 4, dry_radius_um: 3.00, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
+            ss5: {name: Sea salt bin 5, dry_radius_um: 8.00, sigma_g: 1.0, filename_sarb: /CERES/sarb/dfillmor/Optics/SARB/mam4_mono_larc_c000003.v2.nc}
         allocations:
             SO4: {a1: 0.90, a2: 0.10, a3: 0.00, a4: 0.00}
             OCPHILIC: {a1: 1.00}
@@ -232,13 +248,18 @@ Schemes:
             NO3: {a1: 0.70, a3: 0.30}
             POM: {a1: 0.80, a2: 0.20}
             SOA: {a1: 0.80, a2: 0.20}
+            # bin-resolved dust and sea salt -> one external mode per bin
+            DU001: {du1: 1.00}
+            DU002: {du2: 1.00}
+            DU003: {du3: 1.00}
+            DU004: {du4: 1.00}
+            DU005: {du5: 1.00}
+            SS001: {ss1: 1.00}
+            SS002: {ss2: 1.00}
+            SS003: {ss3: 1.00}
+            SS004: {ss4: 1.00}
+            SS005: {ss5: 1.00}
         size_bins:
             NO3AN:
                 species: [NO3AN1, NO3AN2, NO3AN3]
                 radii_um: [0.15, 0.50, 1.50]
-            SS:
-                species: [SS001, SS002, SS003, SS004, SS005]
-                radii_um: [0.08, 0.30, 1.00, 3.00, 8.00]
-            DU:
-                species: [DU001, DU002, DU003, DU004, DU005]
-                radii_um: [0.73, 1.40, 2.40, 4.50, 8.00]
