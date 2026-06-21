@@ -22,8 +22,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from mode_config import load_config
+from mode_config import load_config, resolved_allocations
 from mode_physics import kohler_wet_radius_um, mix_mode_state
+from mode_optics import _mode_species, _species_info, _type_key
 from mie_sphere import mie_efficiencies, mie_cross_sections_um2
 from mie_lognormal import mode_averaged_cross_sections_um2
 import verify_physics as vp
@@ -227,25 +228,43 @@ def fig_mode_integrated(outdir, optics_dir):
 
 
 # --------------------------------------------------------------------------- #
-# Spectral band dependence of the radiative properties (MEE, SSA, asymmetry)
+# Spectral band dependence: internally-mixed modes vs external dust/sea-salt
 # --------------------------------------------------------------------------- #
-_SPECIES_FILE = {"SU": "SU.v1_3", "OC": "OC.v1_3", "BC": "BC.v1_3",
-                 "DU": "DU.v15_3", "SS": "SS.v3_3", "NI": "NI.v2_5"}
-_SPECIES_CACHE = {}
+# Representative global-mean column mass (kg/m2) of the internal-mode species,
+# from the GEOS-IT 2008-07-01T00 slice. Only relative composition matters for
+# SSA / asymmetry / mass-extinction efficiency (mass-independent).
+_REP_MASS = {"SO4": 2.948e-6, "OCPHILIC": 4.369e-6, "OCPHOBIC": 9.967e-7,
+             "BCPHILIC": 3.989e-7, "BCPHOBIC": 1.47e-7,
+             "NO3AN1": 6.013e-7, "NO3AN2": 9.862e-7, "NO3AN3": 2.941e-9}
+_TYPE_FILE = {"SU": "SU.v1_3", "POM": "OC.v1_3", "SOA": "OC.v1_3", "BC": "BC.v1_3",
+              "DU": "DU.v15_3", "SS": "SS.v3_3", "NI": "NI.v2_5"}
+_IDX_CACHE = {}
+_REP_RH = 0.70   # boundary-layer-representative relative humidity
 
 
-def _species_index(optics_dir, typ, wl_um):
-    if typ not in _SPECIES_CACHE:
-        ds = xr.open_dataset(os.path.join(optics_dir, "..", "MERRA2", "optics_%s.nc" % _SPECIES_FILE[typ]))
+def _type_index(optics_dir, type_key, wl_um):
+    if type_key not in _IDX_CACHE:
+        ds = xr.open_dataset(os.path.join(optics_dir, "..", "MERRA2", "optics_%s.nc" % _TYPE_FILE[type_key]))
         lam = np.asarray(ds["lambda"].values, dtype=np.float64) * 1e6
         nr = np.asarray(ds["refreal"].values, dtype=np.float64)
         ni = np.abs(np.asarray(ds["refimag"].values, dtype=np.float64))
         if nr.ndim == 3:
             nr, ni = nr[0, 0], ni[0, 0]
-        _SPECIES_CACHE[typ] = (lam, nr, ni)
+        _IDX_CACHE[type_key] = (lam, nr, ni)
         ds.close()
-    lam, nr, ni = _SPECIES_CACHE[typ]
+    lam, nr, ni = _IDX_CACHE[type_key]
     return float(np.interp(wl_um, lam, nr)), float(np.interp(wl_um, lam, ni))
+
+
+def _water_index(optics_dir, wl_um):
+    if "WAT" not in _IDX_CACHE:
+        ds = xr.open_dataset(os.path.join(optics_dir, "..", "MERRA2", "optics_WAT.nc"))
+        _IDX_CACHE["WAT"] = (np.asarray(ds["wavelength1"].values, dtype=np.float64),
+                             np.asarray(ds["watern"].values, dtype=np.float64),
+                             np.asarray(ds["wateri"].values, dtype=np.float64))
+        ds.close()
+    wl, nr, ni = _IDX_CACHE["WAT"]
+    return float(np.interp(wl_um, wl, nr)), float(np.interp(wl_um, wl, ni))
 
 
 def _band_midpoints(optics_dir):
@@ -256,42 +275,59 @@ def _band_midpoints(optics_dir):
     return np.concatenate([0.5 * (sw[:-1] + sw[1:]), 0.5 * (lw[:-1] + lw[1:])])
 
 
-def fig_spectral_radiative(outdir, optics_dir):
+def fig_spectral_radiative(outdir, optics_dir, config):
     mids = _band_midpoints(optics_dir)
-    # (type, label, density g/cm3, representative radius um, sigma_g, color)
-    cases = [
-        ("SU", "sulfate", 1.7, 0.10, 1.8, NCAR["ncar_blue"]),
-        ("OC", "organic", 1.8, 0.10, 1.8, NCAR["green"]),
-        ("BC", "black carbon", 1.0, 0.05, 1.6, NCAR["gray"]),
-        ("DU", "dust", 2.6, 1.40, 1.0, NCAR["orange"]),
-        ("SS", "sea salt", 2.2, 1.00, 1.0, NCAR["aqua"]),
+    modes = config["Schemes"]["MAM4"]["modes"]
+    alloc = resolved_allocations(config, "MAM4")
+    # (mode key, label, color, linestyle, external?)
+    comps = [
+        ("a1", "a1 internal mix (SU+OC+BC+NO3)", NCAR["ncar_blue"], "-", False),
+        ("a2", "a2 internal mix (SU+NO3)", NCAR["aqua"], "-", False),
+        ("a3", "a3 internal mix (NO3+SU)", NCAR["purple"], "-", False),
+        ("a4", "a4 internal mix (BC+OC)", NCAR["red"], "-", False),
+        ("du2", "dust bin (external)", NCAR["orange"], "--", True),
+        ("ss3", "sea-salt bin (external)", NCAR["green"], "--", True),
     ]
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.4))
-    for typ, label, rho, r, sg, color in cases:
+    rh = np.array([_REP_RH], dtype=np.float32)
+    temp = np.array([283.0], dtype=np.float32)
+    for key, label, color, lsty, external in comps:
+        species = _mode_species(config, "MAM4", key)
+        info = _species_info(config, species)
+        r_d = float(modes[key]["dry_radius_um"]); sg = float(modes[key]["sigma_g"])
+        if external:
+            q = {s: np.array([1.0], dtype=np.float32) for s in species}
+        else:
+            q = {s: np.array([_REP_MASS.get(s, 0.0) * float(alloc[s].get(key, 0.0))], dtype=np.float32)
+                 for s in species}
+        rho_eff = (sum(float(q[s][0]) for s in species)
+                   / max(sum(float(q[s][0]) / info[s]["density"] for s in species), 1e-30))
+        mean_vol_um3 = (4.0 / 3.0) * np.pi * r_d ** 3 * np.exp(4.5 * np.log(sg) ** 2)
+        mass_g = rho_eff * mean_vol_um3 * 1e-12
         mee, ssa, asm = [], [], []
-        mean_vol_um3 = (4.0 / 3.0) * np.pi * r ** 3 * np.exp(4.5 * np.log(sg) ** 2)
-        mass_g = rho * mean_vol_um3 * 1e-12            # g/cm3 * (um3 -> cm3) -> g per particle
         for wl in mids:
-            nr, ni = _species_index(optics_dir, typ, float(wl))
-            cs = (mie_cross_sections_um2(nr, ni, r, float(wl)) if sg <= 1.0
-                  else mode_averaged_cross_sections_um2(nr, ni, r, sg, float(wl)))
-            mee.append((cs["ext"] * 1e-12) / mass_g)   # um2 -> m2, per g  => m2/g
+            refractive = {s: _type_index(optics_dir, _type_key(s), float(wl)) for s in species}
+            refractive["WAT"] = _water_index(optics_dir, float(wl))
+            st = mix_mode_state(info, q, refractive, rh, temp, dry_radius_um=r_d)
+            nr, ni, rw = float(st["n_re"][0]), float(st["n_im"][0]), float(st["r_w_um"][0])
+            cs = (mie_cross_sections_um2(nr, ni, rw, float(wl)) if sg <= 1.0
+                  else mode_averaged_cross_sections_um2(nr, ni, rw, sg, float(wl)))
+            mee.append((cs["ext"] * 1e-12) / mass_g)
             ssa.append(cs["sca"] / cs["ext"] if cs["ext"] > 0 else np.nan)
             asm.append(cs["asymmetry"])
-        ax1.plot(mids, mee, color=color, marker="o", ms=3, label=label)
-        ax2.plot(mids, ssa, color=color, marker="o", ms=3, label=label)
-        ax3.plot(mids, asm, color=color, marker="o", ms=3, label=label)
+        kw = dict(color=color, ls=lsty, marker="o", ms=3, label=label)
+        ax1.plot(mids, mee, **kw); ax2.plot(mids, ssa, **kw); ax3.plot(mids, asm, **kw)
     for ax in (ax1, ax2, ax3):
         ax.set_xscale("log")
-        ax.axvspan(4.0, mids.max() * 1.1, color=NCAR["light_gray"] if "light_gray" in NCAR else "0.92", alpha=0.5)
+        ax.axvspan(4.0, mids.max() * 1.1, color="0.92")
         ax.axvline(4.0, color=NCAR["gray"], ls=":", lw=1.0)
         ax.set_xlabel("wavelength ($\\mu$m)")
     ax1.set_yscale("log"); ax1.set_ylabel("mass ext. efficiency (m$^2$/g)"); ax1.set_title("(a) extinction")
     ax2.set_ylabel("single-scattering albedo"); ax2.set_title("(b) SSA"); ax2.set_ylim(0, 1.02)
     ax3.set_ylabel("asymmetry parameter $g$"); ax3.set_title("(c) asymmetry"); ax3.set_ylim(0, 1.0)
-    ax1.legend(frameon=True, fontsize=9, loc="lower left")
-    fig.suptitle("Spectral radiative properties across the SW (white) and LW (shaded) bands",
-                 fontweight="bold")
+    ax2.legend(frameon=True, fontsize=8, loc="lower left")
+    fig.suptitle("Spectral radiative properties at RH=%.0f%%: internally-mixed modes vs external "
+                 "dust/sea-salt bins  (SW unshaded, LW shaded)" % (_REP_RH * 100), fontweight="bold")
     save(fig, outdir, "spectral_radiative_properties")
 
 
@@ -414,7 +450,7 @@ def main(argv=None):
     fig_refractive_mixing(args.outdir)
     fig_mie_efficiency(args.outdir)
     fig_mode_integrated(args.outdir, args.optics_dir)
-    fig_spectral_radiative(args.outdir, args.optics_dir)
+    fig_spectral_radiative(args.outdir, args.optics_dir, config)
     fig_aod_components(args.outdir)
     fig_aod_maps(args.outdir)
     fig_scorecard(args.outdir, config)
