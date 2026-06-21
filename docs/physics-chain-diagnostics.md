@@ -58,6 +58,29 @@ calculations:
 - LUT clipping is not the issue. For a3, selected radius is `0.4-7.91306 um` inside table range `0.01-24.9375 um`.
 - Production dust optics now align with the reference repo: `optics_DU.v15_3.nc`.
 
+## Mode Geometry Mismatch
+
+Current `aerosol.yaml` and `aerosol_ceres.yaml` point at SARB
+`mam4_mode*_larc_c000002.v2.nc` tables, but `Schemes.MAM4.modes` does not
+match the scalar mode geometry stored in those tables.
+
+`ncdump -v sigmag,dgnum,dgnumlo,dgnumhi` on the CERES production files shows:
+
+| mode | config `dry_radius_um` | config `sigma_g` | RRTMG `0.5 * dgnum` | RRTMG `sigmag` | SARB v2 `0.5 * dgnum` | SARB v2 `sigmag` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| a1 | 0.055 | 1.8 | 0.055 | 1.8 | 0.055 | 1.6 |
+| a2 | 0.012 | 1.6 | 0.013 | 1.6 | 0.013 | 1.6 |
+| a3 | 0.40 | 1.8 | 1.0 | 1.8 | 0.45 | 1.2 |
+| a4 | 0.050 | 1.6 | 0.025 | 1.60000002384186 | 0.025 | 1.6 |
+
+This appears to be SARB table version drift. The original
+`mam4_mode*_larc_c000000.nc` SARB tables used a1/a3 `sigmag = 1.8` and a3
+`dgnum = 2`, matching the RRTMG mode widths and coarse-mode diameter. The v2
+SARB tables used by the configs changed a1 to `sigmag = 1.6` and a3 to
+`sigmag = 1.2`, `dgnum = 0.9`. The current native-grid path uses the YAML
+`sigma_g` in `derive_number_mixing_ratio`, so modes a1 and a3 are normalized
+with a different lognormal width than the SARB lookup table metadata.
+
 ## First Failing Stage
 
 The loss starts in the MAM optical representation after mass allocation:
@@ -93,7 +116,7 @@ selected points.
 ## Open Physics Checks
 
 - Decide whether GEOSIT bins should remain bin-resolved inside each MAM mode instead of collapsing to one mode radius before optics lookup.
-- Reconcile configured mode radii with MAM table metadata. RRTMG `0.5 * dgnum` gives a3 radius `1.0 um` and a4 radius `0.025 um`, while current config uses a3 `0.40 um` and a4 `0.050 um`.
+- Reconcile configured mode radius/sigma values with the SARB table version actually used by `filename_sarb`.
 - Check whether water uptake should be mass-weighted by species/bin before mode-level refractive-index and radius lookup.
 - Confirm whether SARB `extpsw_mie` is intended to equal homogeneous-sphere
   midpoint Mie cross sections or a different band/mode-averaged quantity.
