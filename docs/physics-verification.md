@@ -187,13 +187,16 @@ not in git. To deploy in production, run on the CERES host:
 
 ```bash
 python generate_lut.py --optics-dir /CERES/sarb/dfillmor/Optics/SARB
-# then rebuild each needed fine band, e.g.:
+# then rebuild every fine band (sw1-14, lw1-12) for each mode, e.g.:
 python refine_lut.py --aerosol aerosol_ceres.yaml --scheme MAM4 --mode a3 --band sw5
+python refine_lut.py --aerosol aerosol_ceres.yaml --scheme MAM4 --mode a3 --band lw7
 ```
 
-Remaining: stage G validates a1 directly (a2–a4 covered by the uniform
-generator); only the SW fine bands present for `c000002.v2` were rebuilt
-(mode1 sw1–9, modes 2–4 sw1/sw5) — regenerate additional bands as needed.
+Locally the full fine set is rebuilt: **all 14 SW + 12 LW bands for every mode
+(104 tables)**. The SW and LW coarse refractive-index grids are identical
+(`[1.33,2.0] × [0,0.79]`), so the same fine grid serves both. Stage G validates
+a1 directly; a2–a4 share the uniform generator and were spot-checked against the
+independent reference (SW and LW) to <0.2%.
 
 ## Verifier integrity
 
