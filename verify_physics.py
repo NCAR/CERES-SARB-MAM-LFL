@@ -127,7 +127,9 @@ def stage_a(config):
 
     # size-bin allocations vs an INDEPENDENT lognormal-pdf nearest-mode reference
     # (recomputed here, not via allocate_size_bins_to_modes, to avoid a circular check)
-    mode_specs = scheme["modes"]
+    # only lognormal modes are size-bin allocation targets; skip monodisperse
+    # (sigma_g=1) bin-modes for dust/sea salt
+    mode_specs = {m: s for m, s in scheme["modes"].items() if float(s["sigma_g"]) > 1.0}
     max_dev = 0.0
     nbins = 0
     for group in scheme.get("size_bins", {}).values():
