@@ -33,6 +33,18 @@ Smoke case:
 
 Use `--mode a3` with `diagnose_mode_physics.py` for a faster focused check of the dominant coarse mode.
 
+Compare SARB LUT cross sections against independent homogeneous-sphere Mie
+calculations:
+
+```bash
+/homedir/dfillmor/miniconda3/envs/sarb/bin/python -u diagnose_mie_lut.py \
+  --aerosol aerosol_ceres.yaml \
+  --mode a3 \
+  --band sw05 \
+  --time 2008-07-01T00 \
+  --sample-count 3
+```
+
 ## Findings
 
 - The reported MAM AOD mean is an area-weighted global mean over the native GEOSIT grid for one instantaneous field.
@@ -60,8 +72,28 @@ The base SARB `extpsw_scaled` variables are not a drop-in fix:
 - a1 with `extpsw_scaled * dry_mass` gives `0.00413`, still too low.
 - a3 with `extpsw_scaled * dry_mass` gives `0.508`, too high.
 
+Independent Mie checks indicate the SW05 LUT values themselves may also be low
+for the selected internal-mix points. The local environment does not have
+`miepython`, `PyMieScatt`, or `pymiecoated`, so `mie_sphere.py` uses SciPy's
+spherical Bessel functions for a direct homogeneous-sphere calculation.
+
+Representative a3/SW05 samples:
+
+- `r=0.40818 um`, `n=1.52405 + 0.00173i`: LUT `0.323511 um2`, independent Mie `1.95196 um2`.
+- `r=0.439189 um`, `n=1.472 + 0.000001i`: LUT `0.271317 um2`, independent Mie `2.42699 um2`.
+- `r=1.12499 um`, `n=1.34072 + 0.0000147i`: LUT `3.47069 um2`, independent Mie `8.31453 um2`.
+- `r=7.91306 um`, `n=1.33302 + 0i`: LUT `113.663 um2`, independent Mie `424.045 um2`.
+
+This does not yet prove the SARB LUT generation is wrong, because the SARB
+MAM tables may encode a mode-averaged or band-averaged quantity rather than a
+plain homogeneous-sphere cross section at band midpoint. It does show the LUT
+cross sections are much smaller than a direct Mie calculation at comparable
+selected points.
+
 ## Open Physics Checks
 
 - Decide whether GEOSIT bins should remain bin-resolved inside each MAM mode instead of collapsing to one mode radius before optics lookup.
 - Reconcile configured mode radii with MAM table metadata. RRTMG `0.5 * dgnum` gives a3 radius `1.0 um` and a4 radius `0.025 um`, while current config uses a3 `0.40 um` and a4 `0.050 um`.
 - Check whether water uptake should be mass-weighted by species/bin before mode-level refractive-index and radius lookup.
+- Confirm whether SARB `extpsw_mie` is intended to equal homogeneous-sphere
+  midpoint Mie cross sections or a different band/mode-averaged quantity.
