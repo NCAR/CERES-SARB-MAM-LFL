@@ -97,13 +97,13 @@ def fig_size_distributions(outdir, config):
         ax.plot(r, pdf / pdf.max(), color=color, label=key)
     du = [float(modes["du%d" % i]["dry_radius_um"]) for i in range(1, 6)]
     ss = [float(modes["ss%d" % i]["dry_radius_um"]) for i in range(1, 6)]
-    ax.vlines(du, 0, 0.85, color=NCAR["red"], lw=2.2, label="Dust bins")
-    ax.vlines(ss, 0, 0.7, color=NCAR["green"], lw=2.2, ls=(0, (4, 2)), label="Sea-salt bins")
+    ax.vlines(du, 0, 0.85, color=NCAR["red"], lw=2.2, label="Dust Bins")
+    ax.vlines(ss, 0, 0.7, color=NCAR["green"], lw=2.2, ls=(0, (4, 2)), label="Sea-Salt Bins")
     ax.set_xscale("log")
     _logticks(ax, xticks=[0.01, 0.1, 1, 10])
     ax.set_xlim(2e-3, 30); ax.set_ylim(0, 1.08)
-    ax.set_xlabel("Dry radius (μm)"); ax.set_ylabel("$dN/d\\ln r$")
-    ax.set_title("Size distributions")
+    ax.set_xlabel("Dry Radius (μm)"); ax.set_ylabel("$dN/d\\ln r$")
+    ax.set_title("Size Distributions")
     ax.legend(frameon=True, loc="upper right")
     save(fig, outdir, "size_distributions")
 
@@ -112,14 +112,14 @@ def fig_hygroscopicity(outdir):
     rh = np.linspace(0.0, 1.0, 101)
     species = [
         ("Sulfate", [2.42848, -3.85261, 1.88159], NCAR["ncar_blue"]),
-        ("Sea salt", [4.83257, -6.92329, 3.27805], NCAR["aqua"]),
-        ("Organic / dust", [0.14, 0.0, 0.0], NCAR["orange"]),
-        ("Black carbon", [0.01, 0.0, 0.0], NCAR["gray"]),
+        ("Sea Salt", [4.83257, -6.92329, 3.27805], NCAR["aqua"]),
+        ("Organic / Dust", [0.14, 0.0, 0.0], NCAR["orange"]),
+        ("Black Carbon", [0.01, 0.0, 0.0], NCAR["gray"]),
     ]
     fig, ax = plt.subplots(figsize=(7, 4.6))
     for label, (b0, b1, b2), c in species:
         ax.plot(rh, b0 + b1 * rh + b2 * rh ** 2, color=c, label=label)
-    ax.set_xlabel("Relative humidity"); ax.set_ylabel("$\\kappa$")
+    ax.set_xlabel("Relative Humidity"); ax.set_ylabel("$\\kappa$")
     ax.set_title("Hygroscopicity")
     ax.legend(frameon=True); ax.set_ylim(bottom=0)
     save(fig, outdir, "hygroscopicity")
@@ -132,18 +132,18 @@ def fig_kohler(outdir):
     for B, c in [(0.01, NCAR["gray"]), (0.14, NCAR["orange"]), (0.6, NCAR["ncar_blue"]), (1.2, NCAR["aqua"])]:
         w = kohler_wet_radius_um(0.055, np.full_like(rh, B), rh, T)
         ax1.plot(rh, w / 0.055, color=c, label="$\\kappa = %g$" % B)
-    ax1.set_xlabel("Relative humidity"); ax1.set_ylabel("$r_w / r_d$")
-    ax1.set_title("Growth factor"); ax1.legend(frameon=True)
+    ax1.set_xlabel("Relative Humidity"); ax1.set_ylabel("$r_w / r_d$")
+    ax1.set_title("Growth Factor"); ax1.legend(frameon=True)
     for label, rd, B, c in [("Sulfate", 0.055, 0.6, NCAR["ncar_blue"]),
                            ("Dust", 0.73, 0.14, NCAR["orange"]),
-                           ("Sea salt", 1.0, 1.2, NCAR["aqua"])]:
+                           ("Sea Salt", 1.0, 1.2, NCAR["aqua"])]:
         w = kohler_wet_radius_um(rd, np.full_like(rh, B), rh, T)
         ax2.plot(rh, w, color=c, label=label)
     ax2.set_yscale("log")
     _logticks(ax2, yticks=[0.1, 1])
-    ax2.set_xlabel("Relative humidity"); ax2.set_ylabel("$r_w$ (μm)")
-    ax2.set_title("Wet radius"); ax2.legend(frameon=True)
-    fig.suptitle("Köhler wet radius", fontweight="bold")
+    ax2.set_xlabel("Relative Humidity"); ax2.set_ylabel("$r_w$ (μm)")
+    ax2.set_title("Wet Radius"); ax2.legend(frameon=True)
+    fig.suptitle("Köhler Wet Radius", fontweight="bold")
     save(fig, outdir, "kohler_growth")
 
 
@@ -157,13 +157,13 @@ def fig_refractive_mixing(outdir):
     ax1.plot(rh, st["n_re"], color=NCAR["ncar_blue"], label="Mixture")
     ax1.axhline(1.95, color=NCAR["gray"], ls="--", lw=1.2, label="Dry BC")
     ax1.axhline(1.34, color=NCAR["aqua"], ls=":", lw=1.6, label="Water")
-    ax1.set_xlabel("Relative humidity"); ax1.set_ylabel("$n_r$")
-    ax1.set_title("Real part"); ax1.legend(frameon=True)
+    ax1.set_xlabel("Relative Humidity"); ax1.set_ylabel("$n_r$")
+    ax1.set_title("Real Part"); ax1.legend(frameon=True)
     ax2.plot(rh, st["n_im"], color=NCAR["red"], label="Mixture")
     ax2.axhline(0.79, color=NCAR["gray"], ls="--", lw=1.2, label="Dry BC")
-    ax2.set_xlabel("Relative humidity"); ax2.set_ylabel("$n_i$")
-    ax2.set_title("Imaginary part"); ax2.legend(frameon=True)
-    fig.suptitle("Refractive-index mixing", fontweight="bold")
+    ax2.set_xlabel("Relative Humidity"); ax2.set_ylabel("$n_i$")
+    ax2.set_title("Imaginary Part"); ax2.legend(frameon=True)
+    fig.suptitle("Refractive-Index Mixing", fontweight="bold")
     save(fig, outdir, "refractive_mixing")
 
 
@@ -178,8 +178,8 @@ def fig_mie_efficiency(outdir):
     ax.axhline(2.0, color=NCAR["gray"], ls="--", lw=1.2)
     ax.set_xscale("log")
     _logticks(ax, xticks=[0.01, 0.1, 1, 10, 100])
-    ax.set_xlabel("Size parameter, $x$"); ax.set_ylabel("$Q$")
-    ax.set_title("Mie efficiencies")
+    ax.set_xlabel("Size Parameter, $x$"); ax.set_ylabel("$Q$")
+    ax.set_title("Mie Efficiencies")
     ax.legend(frameon=True, loc="upper left"); ax.set_ylim(0, 4.6)
     save(fig, outdir, "mie_efficiency")
 
@@ -206,7 +206,7 @@ def fig_mode_integrated(outdir, optics_dir):
     ax1.loglog(r, lut, color=NCAR["ncar_blue"], ls="none", marker="o", ms=4, label="LUT")
     _logticks(ax1, xticks=[0.1, 1, 10], yticks=[0.01, 1, 100])
     ax1.set_xlabel("Radius (μm)"); ax1.set_ylabel("$\\sigma_\\mathrm{ext}$ (μm$^2$)")
-    ax1.set_title("Cross section"); ax1.legend(frameon=True)
+    ax1.set_title("Cross Section"); ax1.legend(frameon=True)
 
     ax2.semilogx(r, mono / (np.pi * r ** 2), color=NCAR["gray"], ls=":", label="Monodisperse")
     ax2.semilogx(r, avg16 / (np.pi * r ** 2), color=NCAR["aqua"], label="$\\sigma_g = 1.6$")
@@ -214,8 +214,8 @@ def fig_mode_integrated(outdir, optics_dir):
     ax2.axhline(2.0, color=NCAR["gray"], ls="--", lw=1.0)
     _logticks(ax2, xticks=[0.1, 1, 10])
     ax2.set_xlabel("Radius (μm)"); ax2.set_ylabel("$Q_\\mathrm{ext}$")
-    ax2.set_title("Effective efficiency"); ax2.legend(frameon=True)
-    fig.suptitle("Mode-integrated cross section", fontweight="bold")
+    ax2.set_title("Effective Efficiency"); ax2.legend(frameon=True)
+    fig.suptitle("Mode-Integrated Cross Section", fontweight="bold")
     save(fig, outdir, "mode_integrated_optics")
 
 
@@ -274,7 +274,7 @@ def fig_spectral_radiative(outdir, optics_dir, config):
         ("a3", "a3", NCAR["purple"], "-", False),
         ("a4", "a4", NCAR["red"], "-", False),
         ("du2", "Dust", NCAR["orange"], "--", True),
-        ("ss3", "Sea salt", NCAR["green"], "--", True),
+        ("ss3", "Sea Salt", NCAR["green"], "--", True),
     ]
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.4))
     rh = np.array([_REP_RH], dtype=np.float32)
@@ -312,10 +312,10 @@ def fig_spectral_radiative(outdir, optics_dir, config):
         ax.set_xlabel("$\\lambda$ (μm)")
     ax1.set_yscale("log"); _logticks(ax1, xticks=[0.3, 1, 3, 10, 30], yticks=[0.001, 0.01, 0.1, 1, 10])
     ax1.set_ylabel("$k_\\mathrm{ext}$ (m$^2$/g)"); ax1.set_title("Extinction")
-    ax2.set_ylabel("$\\omega$"); ax2.set_title("Single-scattering albedo"); ax2.set_ylim(0, 1.02)
+    ax2.set_ylabel("$\\omega$"); ax2.set_title("Single-Scattering Albedo"); ax2.set_ylim(0, 1.02)
     ax3.set_ylabel("$g$"); ax3.set_title("Asymmetry"); ax3.set_ylim(0, 1.0)
     ax2.legend(frameon=True, fontsize=9, loc="lower left")
-    fig.suptitle("Spectral radiative properties", fontweight="bold")
+    fig.suptitle("Spectral Radiative Properties", fontweight="bold")
     save(fig, outdir, "spectral_radiative_properties")
 
 
@@ -331,8 +331,8 @@ def fig_aod_components(outdir):
     ax.set_xticks(np.arange(len(names))); ax.set_xticklabels(names, rotation=45, ha="right", fontsize=9)
     ax.set_ylabel("Column AOD")
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (NCAR["purple"], NCAR["orange"], NCAR["aqua"])]
-    ax.legend(handles, ["Internal modes", "Dust bins", "Sea-salt bins"], frameon=True)
-    ax.set_title("Column AOD by component", fontweight="bold")
+    ax.legend(handles, ["Internal Modes", "Dust Bins", "Sea-Salt Bins"], frameon=True)
+    ax.set_title("Column AOD by Component", fontweight="bold")
     save(fig, outdir, "aod_components")
 
 
@@ -380,11 +380,11 @@ def fig_aod_maps(outdir):
 
 
 STAGE_LABELS = {
-    "A": "Mass $\\to$ mode allocation", "B": "Dry-volume mixing",
-    "C": "Number, lognormal, $\\sigma_g$", "D": "Hygroscopicity",
-    "E": "Köhler wet radius", "F": "Refractive-index mixing",
-    "G": "Optics (LUT vs Mie)", "H": "Layer optical depth",
-    "I": "External mixing", "J": "VIS correction",
+    "A": "Mass $\\to$ Mode Allocation", "B": "Dry-Volume Mixing",
+    "C": "Number, Lognormal, $\\sigma_g$", "D": "Hygroscopicity",
+    "E": "Köhler Wet Radius", "F": "Refractive-Index Mixing",
+    "G": "Optics (LUT vs Mie)", "H": "Layer Optical Depth",
+    "I": "External Mixing", "J": "VIS Correction",
 }
 
 
@@ -410,7 +410,7 @@ def fig_scorecard(outdir, config):
     ax.set_xlim(0, max(sum(t.values()) for t in tally.values()) + 1)
     handles = [plt.Rectangle((0, 0), 1, 1, color=STATUS_COLOR[s]) for s in ("PASS", "FINDING")]
     ax.legend(handles, ["Pass", "Finding"], ncol=2, loc="lower right", frameon=True)
-    ax.set_title("Physics verification", fontweight="bold")
+    ax.set_title("Physics Verification", fontweight="bold")
     fig.subplots_adjust(left=0.34)
     save(fig, outdir, "verification_scorecard")
 
