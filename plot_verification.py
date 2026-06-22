@@ -25,7 +25,6 @@ from mode_physics import kohler_wet_radius_um, mix_mode_state
 from mode_optics import _mode_species, _species_info, _type_key
 from mie_sphere import mie_efficiencies, mie_cross_sections_um2
 from mie_lognormal import mode_averaged_cross_sections_um2
-import verify_physics as vp
 
 NCAR = {
     "space": "#011837", "dark_blue": "#00357A", "ncar_blue": "#0A5DDA",
@@ -33,7 +32,24 @@ NCAR = {
     "gray": "#58595B", "red": "#D62839", "green": "#2E8B57", "purple": "#7B68EE",
 }
 PALETTE = [NCAR[c] for c in ("ncar_blue", "aqua", "orange", "purple", "green", "red", "dark_blue")]
-STATUS_COLOR = {"PASS": NCAR["green"], "FAIL": NCAR["red"], "FINDING": NCAR["ncar_blue"], "WARN": NCAR["gray"]}
+
+# Canonical color per internal mode (used wherever lines/markers are modes).
+MODE_COLOR = {
+    "Accumulation": NCAR["ncar_blue"],
+    "Aitken": NCAR["aqua"],
+    "Coarse": NCAR["purple"],
+    "Primary Carbon": "#3F3F3F",  # dark grey, matching the Black Carbon species color
+}
+# Semantic color per aerosol species / family (used wherever they are species).
+SPECIES_COLOR = {
+    "Sulfate": "#2166AC",       # blue
+    "Black Carbon": "#3F3F3F",  # dark grey
+    "Organic": "#5AAE61",       # green
+    "Dust": "#CD853F",          # desert brown
+    "Sea Salt": "#006D77",      # teal
+    "Nitrate": "#9467BD",       # violet
+    "Water": "#74A9CF",         # light blue
+}
 SW05_UM = 0.54625
 
 
@@ -89,16 +105,16 @@ def fig_size_distributions(outdir, config):
     modes = config["Schemes"]["MAM4"]["modes"]
     r = np.geomspace(2e-3, 30.0, 800)
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
-    for key, color in zip(("a1", "a2", "a3", "a4"),
-                          (NCAR["ncar_blue"], NCAR["aqua"], NCAR["orange"], NCAR["purple"])):
+    for key in ("a1", "a2", "a3", "a4"):
+        name = modes[key]["name"]
         rg = float(modes[key]["dry_radius_um"]); sg = float(modes[key]["sigma_g"])
         ls = np.log(sg)
         pdf = np.exp(-((np.log(r) - np.log(rg)) ** 2) / (2 * ls ** 2)) / (ls * np.sqrt(2 * np.pi))
-        ax.plot(r, pdf / pdf.max(), color=color, label=key)
+        ax.plot(r, pdf / pdf.max(), color=MODE_COLOR[name], label=name)
     du = [float(modes["du%d" % i]["dry_radius_um"]) for i in range(1, 6)]
     ss = [float(modes["ss%d" % i]["dry_radius_um"]) for i in range(1, 6)]
-    ax.vlines(du, 0, 0.85, color=NCAR["red"], lw=2.2, label="Dust Bins")
-    ax.vlines(ss, 0, 0.7, color=NCAR["green"], lw=2.2, ls=(0, (4, 2)), label="Sea-Salt Bins")
+    ax.vlines(du, 0, 0.85, color=SPECIES_COLOR["Dust"], lw=2.2, label="Dust Bins")
+    ax.vlines(ss, 0, 0.7, color=SPECIES_COLOR["Sea Salt"], lw=2.2, ls=(0, (4, 2)), label="Sea-Salt Bins")
     ax.set_xscale("log")
     _logticks(ax, xticks=[0.01, 0.1, 1, 10])
     ax.set_xlim(2e-3, 30); ax.set_ylim(0, 1.08)
@@ -111,10 +127,10 @@ def fig_size_distributions(outdir, config):
 def fig_hygroscopicity(outdir):
     rh = np.linspace(0.0, 1.0, 101)
     species = [
-        ("Sulfate", [2.42848, -3.85261, 1.88159], NCAR["ncar_blue"]),
-        ("Sea Salt", [4.83257, -6.92329, 3.27805], NCAR["aqua"]),
-        ("Organic / Dust", [0.14, 0.0, 0.0], NCAR["orange"]),
-        ("Black Carbon", [0.01, 0.0, 0.0], NCAR["gray"]),
+        ("Sulfate", [2.42848, -3.85261, 1.88159], SPECIES_COLOR["Sulfate"]),
+        ("Sea Salt", [4.83257, -6.92329, 3.27805], SPECIES_COLOR["Sea Salt"]),
+        ("Organic / Dust", [0.14, 0.0, 0.0], SPECIES_COLOR["Organic"]),
+        ("Black Carbon", [0.01, 0.0, 0.0], SPECIES_COLOR["Black Carbon"]),
     ]
     fig, ax = plt.subplots(figsize=(7, 4.6))
     for label, (b0, b1, b2), c in species:
@@ -129,14 +145,15 @@ def fig_kohler(outdir):
     rh = np.linspace(0.05, 0.985, 160).astype(np.float32)
     T = np.full_like(rh, 290.0)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
-    for B, c in [(0.01, NCAR["gray"]), (0.14, NCAR["orange"]), (0.6, NCAR["ncar_blue"]), (1.2, NCAR["aqua"])]:
+    for B, c in [(0.01, SPECIES_COLOR["Black Carbon"]), (0.14, SPECIES_COLOR["Dust"]),
+                 (0.6, SPECIES_COLOR["Sulfate"]), (1.2, SPECIES_COLOR["Sea Salt"])]:
         w = kohler_wet_radius_um(0.055, np.full_like(rh, B), rh, T)
         ax1.plot(rh, w / 0.055, color=c, label="$\\kappa = %g$" % B)
     ax1.set_xlabel("Relative Humidity"); ax1.set_ylabel("$r_w / r_d$")
     ax1.set_title("Growth Factor"); ax1.legend(frameon=True)
-    for label, rd, B, c in [("Sulfate", 0.055, 0.6, NCAR["ncar_blue"]),
-                           ("Dust", 0.73, 0.14, NCAR["orange"]),
-                           ("Sea Salt", 1.0, 1.2, NCAR["aqua"])]:
+    for label, rd, B, c in [("Sulfate", 0.055, 0.6, SPECIES_COLOR["Sulfate"]),
+                           ("Dust", 0.73, 0.14, SPECIES_COLOR["Dust"]),
+                           ("Sea Salt", 1.0, 1.2, SPECIES_COLOR["Sea Salt"])]:
         w = kohler_wet_radius_um(rd, np.full_like(rh, B), rh, T)
         ax2.plot(rh, w, color=c, label=label)
     ax2.set_yscale("log")
@@ -155,12 +172,12 @@ def fig_refractive_mixing(outdir):
     st = mix_mode_state(info, q, refr, rh, np.full_like(rh, 290.0), dry_radius_um=0.055)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
     ax1.plot(rh, st["n_re"], color=NCAR["ncar_blue"], label="Mixture")
-    ax1.axhline(1.95, color=NCAR["gray"], ls="--", lw=1.2, label="Dry BC")
-    ax1.axhline(1.34, color=NCAR["aqua"], ls=":", lw=1.6, label="Water")
+    ax1.axhline(1.95, color=SPECIES_COLOR["Black Carbon"], ls="--", lw=1.2, label="Dry BC")
+    ax1.axhline(1.34, color=SPECIES_COLOR["Water"], ls=":", lw=1.6, label="Water")
     ax1.set_xlabel("Relative Humidity"); ax1.set_ylabel("$n_r$")
     ax1.set_title("Real Part"); ax1.legend(frameon=True)
     ax2.plot(rh, st["n_im"], color=NCAR["red"], label="Mixture")
-    ax2.axhline(0.79, color=NCAR["gray"], ls="--", lw=1.2, label="Dry BC")
+    ax2.axhline(0.79, color=SPECIES_COLOR["Black Carbon"], ls="--", lw=1.2, label="Dry BC")
     ax2.set_xlabel("Relative Humidity"); ax2.set_ylabel("$n_i$")
     ax2.set_title("Imaginary Part"); ax2.legend(frameon=True)
     fig.suptitle("Refractive-Index Mixing", fontweight="bold")
@@ -269,12 +286,12 @@ def fig_spectral_radiative(outdir, optics_dir, config):
     modes = config["Schemes"]["MAM4"]["modes"]
     alloc = resolved_allocations(config, "MAM4")
     comps = [
-        ("a1", "a1", NCAR["ncar_blue"], "-", False),
-        ("a2", "a2", NCAR["aqua"], "-", False),
-        ("a3", "a3", NCAR["purple"], "-", False),
-        ("a4", "a4", NCAR["red"], "-", False),
-        ("du2", "Dust", NCAR["orange"], "--", True),
-        ("ss3", "Sea Salt", NCAR["green"], "--", True),
+        ("a1", modes["a1"]["name"], MODE_COLOR[modes["a1"]["name"]], "-", False),
+        ("a2", modes["a2"]["name"], MODE_COLOR[modes["a2"]["name"]], "-", False),
+        ("a3", modes["a3"]["name"], MODE_COLOR[modes["a3"]["name"]], "-", False),
+        ("a4", modes["a4"]["name"], MODE_COLOR[modes["a4"]["name"]], "-", False),
+        ("du2", "Dust", SPECIES_COLOR["Dust"], "--", True),
+        ("ss3", "Sea Salt", SPECIES_COLOR["Sea Salt"], "--", True),
     ]
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.4))
     rh = np.array([_REP_RH], dtype=np.float32)
@@ -314,9 +331,99 @@ def fig_spectral_radiative(outdir, optics_dir, config):
     ax1.set_ylabel("$k_\\mathrm{ext}$ (m$^2$/g)"); ax1.set_title("Extinction")
     ax2.set_ylabel("$\\omega$"); ax2.set_title("Single-Scattering Albedo"); ax2.set_ylim(0, 1.02)
     ax3.set_ylabel("$g$"); ax3.set_title("Asymmetry"); ax3.set_ylim(0, 1.0)
-    ax2.legend(frameon=True, fontsize=9, loc="lower left")
+    ax1.legend(frameon=True, fontsize=9, loc="lower right")
     fig.suptitle("Spectral Radiative Properties", fontweight="bold")
     save(fig, outdir, "spectral_radiative_properties")
+
+
+# --------------------------------------------------------------------------- #
+# Internal-mixture response: hydration (vs RH) and composition (vs species mix)
+# --------------------------------------------------------------------------- #
+def _mixture_optics_point(optics_dir, info, species, q, r_d, sg, rh, temp, wl, n_quad=128):
+    """Run the production mixing -> Köhler -> Mie chain for one (composition, RH)
+    point and return intensive radiative properties at wavelength ``wl``."""
+    refractive = {s: _type_index(optics_dir, _type_key(s), wl) for s in species}
+    refractive["WAT"] = _water_index(optics_dir, wl)
+    rh_a = np.array([rh], dtype=np.float32)
+    t_a = np.array([temp], dtype=np.float32)
+    st = mix_mode_state(info, q, refractive, rh_a, t_a, dry_radius_um=r_d)
+    nr, ni, rw = float(st["n_re"][0]), float(st["n_im"][0]), float(st["r_w_um"][0])
+    cs = (mode_averaged_cross_sections_um2(nr, ni, rw, sg, wl, n_quad=n_quad) if sg > 1.0
+          else mie_cross_sections_um2(nr, ni, rw, wl))
+    masses = [float(q[s][0]) for s in species]
+    rho_eff = sum(masses) / max(sum(m / info[s]["density"] for s, m in zip(species, masses)), 1e-30)
+    mass_g = rho_eff * (4.0 / 3.0) * np.pi * r_d ** 3 * np.exp(4.5 * np.log(sg) ** 2) * 1e-12
+    ext = cs["ext"]
+    return {
+        "k_ext": ext * 1e-12 / mass_g if mass_g > 0 else np.nan,
+        "ssa": cs["sca"] / ext if ext > 0 else np.nan,
+        "g": cs["asymmetry"],
+        "f_water": max(0.0, 1.0 - (r_d / rw) ** 3),
+        "gf": rw / r_d, "n_re": nr, "n_im": ni,
+    }
+
+
+def fig_hydration_radiative(outdir, optics_dir, config):
+    modes = config["Schemes"]["MAM4"]["modes"]
+    alloc = resolved_allocations(config, "MAM4")
+    rh = np.linspace(0.0, 0.98, 40)
+    temp = 283.0
+    comps = [("a1", MODE_COLOR["Accumulation"]), ("a2", MODE_COLOR["Aitken"]),
+             ("a3", MODE_COLOR["Coarse"]), ("a4", MODE_COLOR["Primary Carbon"])]
+    fig, ((axU, axE), (axS, axG)) = plt.subplots(2, 2, figsize=(11, 8.4), constrained_layout=True)
+    for key, color in comps:
+        species = _mode_species(config, "MAM4", key)
+        info = _species_info(config, species)
+        r_d = float(modes[key]["dry_radius_um"]); sg = float(modes[key]["sigma_g"])
+        q = {s: np.array([_REP_MASS.get(s, 0.0) * float(alloc[s].get(key, 0.0))], dtype=np.float32)
+             for s in species}
+        fw, ke, ss, gg = [], [], [], []
+        for r in rh:
+            p = _mixture_optics_point(optics_dir, info, species, q, r_d, sg, float(r), temp, SW05_UM)
+            fw.append(p["f_water"]); ke.append(p["k_ext"]); ss.append(p["ssa"]); gg.append(p["g"])
+        kw = dict(color=color, label=modes[key]["name"], marker="o", ms=3)
+        axU.plot(rh, fw, **kw); axE.plot(rh, ke, **kw)
+        axS.plot(rh, ss, **kw); axG.plot(rh, gg, **kw)
+    for ax in (axU, axE, axS, axG):
+        ax.set_xlabel("Relative Humidity"); ax.set_xlim(0, 1)
+    axU.set_ylabel("Water Volume Fraction"); axU.set_title("Water Uptake"); axU.set_ylim(0, 1)
+    axE.set_yscale("log"); _logticks(axE, yticks=[0.1, 1, 10])
+    axE.set_ylabel("$k_\\mathrm{ext}$ (m$^2$/g)"); axE.set_title("Extinction")
+    axS.set_ylabel("$\\omega$"); axS.set_title("Single-Scattering Albedo"); axS.set_ylim(0, 1.02)
+    axG.set_ylabel("$g$"); axG.set_title("Asymmetry"); axG.set_ylim(0, 1)
+    axU.legend(frameon=True, title="Mode")
+    fig.suptitle("Hydration Response at 0.55 μm", fontweight="bold")
+    save(fig, outdir, "hydration_radiative")
+
+
+def fig_composition_radiative(outdir, optics_dir, config):
+    modes = config["Schemes"]["MAM4"]["modes"]
+    r_d = float(modes["a1"]["dry_radius_um"]); sg = float(modes["a1"]["sigma_g"])
+    rh, temp = 0.70, 283.0
+    f = np.linspace(0.0, 1.0, 31)
+    guests = [("BCPHILIC", "Black Carbon", SPECIES_COLOR["Black Carbon"]),
+              ("OCPHILIC", "Organic", SPECIES_COLOR["Organic"]),
+              ("NO3AN1", "Nitrate", SPECIES_COLOR["Nitrate"])]
+    fig, (axE, axS, axG) = plt.subplots(1, 3, figsize=(14, 4.4))
+    for guest, label, color in guests:
+        species = ["SO4", guest]
+        info = _species_info(config, species)
+        ke, ss, gg = [], [], []
+        for frac in f:
+            q = {"SO4": np.array([1.0 - frac], dtype=np.float32),
+                 guest: np.array([frac], dtype=np.float32)}
+            p = _mixture_optics_point(optics_dir, info, species, q, r_d, sg, rh, temp, SW05_UM)
+            ke.append(p["k_ext"]); ss.append(p["ssa"]); gg.append(p["g"])
+        kw = dict(color=color, label=label, marker="o", ms=3)
+        axE.plot(f, ke, **kw); axS.plot(f, ss, **kw); axG.plot(f, gg, **kw)
+    for ax in (axE, axS, axG):
+        ax.set_xlabel("Guest Mass Fraction"); ax.set_xlim(0, 1)
+    axE.set_ylabel("$k_\\mathrm{ext}$ (m$^2$/g)"); axE.set_title("Extinction")
+    axS.set_ylabel("$\\omega$"); axS.set_title("Single-Scattering Albedo"); axS.set_ylim(0, 1.02)
+    axG.set_ylabel("$g$"); axG.set_title("Asymmetry")
+    axS.legend(frameon=True, title="Guest in Sulfate")
+    fig.suptitle(f"Composition Dependence ({modes['a1']['name']} Mode, RH = 70%, 0.55 μm)", fontweight="bold")
+    save(fig, outdir, "composition_radiative")
 
 
 # --------------------------------------------------------------------------- #
@@ -325,15 +432,39 @@ def fig_aod_components(outdir):
             ("du1", 0.00963), ("du2", 0.02010), ("du3", 0.01210), ("du4", 0.00123), ("du5", 0.00013),
             ("ss1", 0.00108), ("ss2", 0.02044), ("ss3", 0.07324), ("ss4", 0.02087), ("ss5", 0.00072)]
     names = [c[0] for c in comp]; vals = [c[1] for c in comp]
-    colors = [NCAR["purple"] if n[0] == "a" else NCAR["orange"] if n[0] == "d" else NCAR["aqua"] for n in names]
+    fam = {"a": SPECIES_COLOR["Sulfate"], "d": SPECIES_COLOR["Dust"], "s": SPECIES_COLOR["Sea Salt"]}
+    colors = [fam[n[0]] for n in names]
     fig, ax = plt.subplots(figsize=(9.5, 4.4))
     ax.bar(np.arange(len(names)), vals, color=colors)
     ax.set_xticks(np.arange(len(names))); ax.set_xticklabels(names, rotation=45, ha="right", fontsize=9)
     ax.set_ylabel("Column AOD")
-    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (NCAR["purple"], NCAR["orange"], NCAR["aqua"])]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=fam[k]) for k in ("a", "d", "s")]
     ax.legend(handles, ["Internal Modes", "Dust Bins", "Sea-Salt Bins"], frameon=True)
     ax.set_title("Column AOD by Component", fontweight="bold")
     save(fig, outdir, "aod_components")
+
+
+def _aod_paths():
+    D = os.path.expanduser("~/Data/GEOSIT_MAM/2008/07")
+    PRE = "GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294"
+    mam = os.path.join(D, "%s.AER_SW05.2008-07-01T0000.V01.nc4" % PRE)
+    ref = os.path.expanduser("~/Data/GEOSIT/2008/07/"
+        "GEOS.it.asm.aer_inst_3hr_glo_L288x180_v24.GEOS5294.AER_SW05.2008-07-01T0000.V01.nc4")
+    return mam, ref
+
+
+def _column_aod(path):
+    ds = xr.open_dataset(path)
+    col = ds["Extinction_Column_Optical_Depth"]
+    if "time" in col.dims:
+        col = col.isel(time=0)
+    col = col.load()
+    ds.close()
+    return col
+
+
+def _area_mean(da):
+    return float(da.weighted(np.cos(np.deg2rad(da["lat"]))).mean())
 
 
 def fig_aod_maps(outdir):
@@ -343,76 +474,62 @@ def fig_aod_maps(outdir):
     except Exception as exc:
         print("  skipping maps (cartopy import failed): %s" % exc)
         return
-    D = os.path.expanduser("~/Data/GEOSIT_MAM/2008/07")
-    PRE = "GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294"
-    panels = [
-        (os.path.join(D, "%s.AER_SW05.2008-07-01T0000.V01.nc4" % PRE), "MAM"),
-        (os.path.expanduser("~/Data/GEOSIT/2008/07/"
-         "GEOS.it.asm.aer_inst_3hr_glo_L288x180_v24.GEOS5294.AER_SW05.2008-07-01T0000.V01.nc4"),
-         "Reference"),
-    ]
-    if not all(os.path.exists(p) for p, _ in panels):
+    mam_p, ref_p = _aod_paths()
+    if not (os.path.exists(mam_p) and os.path.exists(ref_p)):
         print("  skipping maps (slice/reference missing)")
         return
+    mam, ref = _column_aod(mam_p), _column_aod(ref_p)
+    diff = mam.interp(lat=ref["lat"], lon=ref["lon"], method="linear") - ref
+    m_mam, m_ref, m_diff = _area_mean(mam), _area_mean(ref), _area_mean(diff)
+
+    proj = ccrs.PlateCarree()
     levels = np.arange(0, 1.0001, 0.05)
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4.2), subplot_kw={"projection": ccrs.PlateCarree()})
-    cf = None
-    for ax, (path, title) in zip(axes, panels):
-        ds = xr.open_dataset(path)
-        col = ds["Extinction_Column_Optical_Depth"]
-        if "time" in col.dims:
-            col = col.isel(time=0)
-        lat = col["lat"].values; lon = col["lon"].values
-        vals_c, lon_c = add_cyclic_point(col.values, coord=lon)
-        ax.set_facecolor("gray")
-        cf = ax.contourf(*np.meshgrid(lon_c, lat), vals_c, levels, cmap="turbo",
-                         extend="max", transform=ccrs.PlateCarree())
-        try:
-            ax.coastlines(linewidth=0.5)
-        except Exception:
-            pass
-        ax.set_title(title)
-        ds.close()
-    cbar = fig.colorbar(cf, ax=axes, orientation="horizontal", pad=0.06, shrink=0.6, aspect=40)
-    cbar.set_label("Column AOD")
-    fig.suptitle("Column AOD", fontweight="bold")
+    dlev = np.linspace(-0.5, 0.5, 21)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 3.8), subplot_kw={"projection": proj})
+    base = None
+    for ax, (da, title, mean) in zip(axes[:2],
+                                     [(mam, "MAM", m_mam), (ref, "Reference", m_ref)]):
+        vals_c, lon_c = add_cyclic_point(da.values, coord=da["lon"].values)
+        ax.set_facecolor("0.6")
+        base = ax.contourf(*np.meshgrid(lon_c, da["lat"].values), vals_c, levels,
+                           cmap="turbo", extend="max", transform=proj)
+        ax.coastlines(linewidth=0.4)
+        ax.set_title("%s   $\\overline{\\tau}=%.3f$" % (title, mean))
+    vals_d, lon_d = add_cyclic_point(diff.values, coord=diff["lon"].values)
+    axes[2].set_facecolor("0.6")
+    cfd = axes[2].contourf(*np.meshgrid(lon_d, diff["lat"].values), vals_d, dlev,
+                           cmap="RdBu_r", extend="both", transform=proj)
+    axes[2].coastlines(linewidth=0.4)
+    axes[2].set_title("MAM $-$ Reference   $\\Delta\\overline{\\tau}=%+.3f$" % m_diff)
+    cb1 = fig.colorbar(base, ax=axes[:2], orientation="horizontal", pad=0.05, shrink=0.6, aspect=40)
+    cb1.set_label("Column AOD")
+    cb2 = fig.colorbar(cfd, ax=axes[2], orientation="horizontal", pad=0.05, shrink=0.85, aspect=22)
+    cb2.set_label("$\\Delta$ Column AOD")
+    fig.suptitle("Column AOD: MAM vs Reference (GEOS-IT 2008-07-01 00Z, 0.55 μm)", fontweight="bold")
     save(fig, outdir, "aod_maps")
 
 
-STAGE_LABELS = {
-    "A": "Mass $\\to$ Mode Allocation", "B": "Dry-Volume Mixing",
-    "C": "Number, Lognormal, $\\sigma_g$", "D": "Hygroscopicity",
-    "E": "Köhler Wet Radius", "F": "Refractive-Index Mixing",
-    "G": "Optics (LUT vs Mie)", "H": "Layer Optical Depth",
-    "I": "External Mixing", "J": "VIS Correction",
-}
-
-
-def fig_scorecard(outdir, config):
-    order = list(vp.STAGES)
-    titles = STAGE_LABELS
-    tally = {k: {} for k in order}
-    for letter in order:
-        for res in vp.STAGES[letter][1](config):
-            tally[res.stage][res.status] = tally[res.stage].get(res.status, 0) + 1
-    fig, ax = plt.subplots(figsize=(8.6, 5.2))
-    ys = np.arange(len(order))[::-1]
-    for y, letter in zip(ys, order):
-        left = 0
-        for status in ("PASS", "FINDING", "WARN", "FAIL"):
-            n = tally[letter].get(status, 0)
-            if n:
-                ax.barh(y, n, left=left, color=STATUS_COLOR[status], edgecolor="white")
-                ax.text(left + n / 2, y, str(n), ha="center", va="center", color="white", fontsize=9)
-                left += n
-        ax.text(-0.4, y, "%s  %s" % (letter, titles[letter]), ha="right", va="center", fontsize=10)
-    ax.set_yticks([]); ax.set_xlabel("Checks")
-    ax.set_xlim(0, max(sum(t.values()) for t in tally.values()) + 1)
-    handles = [plt.Rectangle((0, 0), 1, 1, color=STATUS_COLOR[s]) for s in ("PASS", "FINDING")]
-    ax.legend(handles, ["Pass", "Finding"], ncol=2, loc="lower right", frameon=True)
-    ax.set_title("Physics Verification", fontweight="bold")
-    fig.subplots_adjust(left=0.34)
-    save(fig, outdir, "verification_scorecard")
+def fig_aod_zonal(outdir):
+    mam_p, ref_p = _aod_paths()
+    if not (os.path.exists(mam_p) and os.path.exists(ref_p)):
+        print("  skipping zonal (slice/reference missing)")
+        return
+    mam, ref = _column_aod(mam_p), _column_aod(ref_p)
+    zm_mam = mam.interp(lat=ref["lat"], lon=ref["lon"], method="linear").mean("lon")
+    zm_ref = ref.mean("lon")
+    lat = ref["lat"].values
+    fig, ax = plt.subplots(figsize=(7.2, 5.2))
+    ax.fill_betweenx(lat, zm_ref.values, zm_mam.values,
+                     where=(zm_mam.values >= zm_ref.values), color=NCAR["red"], alpha=0.18)
+    ax.fill_betweenx(lat, zm_ref.values, zm_mam.values,
+                     where=(zm_mam.values < zm_ref.values), color=NCAR["ncar_blue"], alpha=0.18)
+    ax.plot(zm_mam.values, lat, color=NCAR["ncar_blue"], label="MAM (%.3f)" % _area_mean(mam))
+    ax.plot(zm_ref.values, lat, color=NCAR["gray"], label="Reference (%.3f)" % _area_mean(ref))
+    ax.set_ylim(-90, 90); ax.set_yticks(np.arange(-90, 91, 30)); ax.set_xlim(left=0)
+    ax.set_xlabel("Zonal-Mean Column AOD"); ax.set_ylabel("Latitude")
+    ax.legend(frameon=True, title="Global mean", loc="upper right")
+    ax.set_title("Zonal-Mean AOD", fontweight="bold")
+    save(fig, outdir, "aod_zonal")
 
 
 def main(argv=None):
@@ -434,9 +551,11 @@ def main(argv=None):
     fig_mie_efficiency(args.outdir)
     fig_mode_integrated(args.outdir, args.optics_dir)
     fig_spectral_radiative(args.outdir, args.optics_dir, config)
+    fig_hydration_radiative(args.outdir, args.optics_dir, config)
+    fig_composition_radiative(args.outdir, args.optics_dir, config)
     fig_aod_components(args.outdir)
     fig_aod_maps(args.outdir)
-    fig_scorecard(args.outdir, config)
+    fig_aod_zonal(args.outdir)
     print("done")
     return 0
 
