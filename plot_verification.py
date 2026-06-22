@@ -428,10 +428,11 @@ def fig_composition_radiative(outdir, optics_dir, config):
 
 # --------------------------------------------------------------------------- #
 def fig_aod_components(outdir):
-    comp = [("a1", 0.02440), ("a2", 0.00000), ("a3", 0.00453), ("a4", 0.00074),
-            ("du1", 0.00963), ("du2", 0.02010), ("du3", 0.01210), ("du4", 0.00123), ("du5", 0.00013),
-            ("ss1", 0.00108), ("ss2", 0.02044), ("ss3", 0.07324), ("ss4", 0.02087), ("ss5", 0.00072)]
-    names = [c[0] for c in comp]; vals = [c[1] for c in comp]
+    if not os.path.exists(_mam_component_path("a1")):
+        print("  skipping aod_components (MAM component files missing)")
+        return
+    names = MAM_COMPONENTS
+    vals = [_area_mean(_column_aod(_mam_component_path(c))) for c in names]
     fam = {"a": SPECIES_COLOR["Sulfate"], "d": SPECIES_COLOR["Dust"], "s": SPECIES_COLOR["Sea Salt"]}
     colors = [fam[n[0]] for n in names]
     fig, ax = plt.subplots(figsize=(9.5, 4.4))
@@ -444,6 +445,11 @@ def fig_aod_components(outdir):
     save(fig, outdir, "aod_components")
 
 
+MAM_COMPONENTS = ["a1", "a2", "a3", "a4",
+                  "du1", "du2", "du3", "du4", "du5",
+                  "ss1", "ss2", "ss3", "ss4", "ss5"]
+
+
 def _aod_paths():
     D = os.path.expanduser("~/Data/GEOSIT_MAM/2008/07")
     PRE = "GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294"
@@ -451,6 +457,22 @@ def _aod_paths():
     ref = os.path.expanduser("~/Data/GEOSIT/2008/07/"
         "GEOS.it.asm.aer_inst_3hr_glo_L288x180_v24.GEOS5294.AER_SW05.2008-07-01T0000.V01.nc4")
     return mam, ref
+
+
+def _mam_component_path(comp):
+    D = os.path.expanduser("~/Data/GEOSIT_MAM/2008/07")
+    PRE = "GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294"
+    return os.path.join(D, "%s.MAM4_%s_SW05.2008-07-01T0000.V01.nc4" % (PRE, comp))
+
+
+def _mam_total_column():
+    """MAM total column AOD = sum of the 14 per-component fields (always
+    reflects the current GEOSIT_MAM files, including the capped sea-salt bins)."""
+    total = None
+    for comp in MAM_COMPONENTS:
+        col = _column_aod(_mam_component_path(comp))
+        total = col if total is None else total + col
+    return total
 
 
 def _column_aod(path):
@@ -495,7 +517,7 @@ def fig_aod_maps(outdir):
     if not (os.path.exists(mam_p) and os.path.exists(ref_p)):
         print("  skipping maps (slice/reference missing)")
         return
-    mam, ref = _column_aod(mam_p), _column_aod(ref_p)
+    mam, ref = _mam_total_column(), _column_aod(ref_p)
     diff = _coarsen_to_reference(mam, ref) - ref
     m_mam, m_ref, m_diff = _area_mean(mam), _area_mean(ref), _area_mean(diff)
 
@@ -531,7 +553,7 @@ def fig_aod_zonal(outdir):
     if not (os.path.exists(mam_p) and os.path.exists(ref_p)):
         print("  skipping zonal (slice/reference missing)")
         return
-    mam, ref = _column_aod(mam_p), _column_aod(ref_p)
+    mam, ref = _mam_total_column(), _column_aod(ref_p)
     zm_mam = _coarsen_to_reference(mam, ref).mean("lon")
     zm_ref = ref.mean("lon")
     lat = ref["lat"].values
