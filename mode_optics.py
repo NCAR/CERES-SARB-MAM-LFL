@@ -515,11 +515,20 @@ def compute_mode_dataset(config, source_key, source_spec, scheme, mode, band_lab
             wavelength_um = _band_wavelength_um(args, ds_bands)
         species_info = _species_info(config, species_names)
         refractive = _refractive_indices(config, species_names, wavelength_um)
+        # Optional per-mode RH cap for hygroscopic growth. The external
+        # monodisperse bins (sea salt) otherwise grow without bound as RH->1,
+        # far past where GOCART caps growth (~0.95); capping the RH fed to the
+        # Köhler solver matches that and only lowers the wet radius (stays in
+        # LUT range). Internal modes carry no cap and are unaffected.
+        rh_for_growth = fields.rh
+        rh_growth_cap = mode_spec.get("rh_growth_cap")
+        if rh_growth_cap is not None:
+            rh_for_growth = np.minimum(fields.rh, np.float32(rh_growth_cap))
         state = mix_mode_state(
             species_info,
             q,
             refractive,
-            fields.rh,
+            rh_for_growth,
             fields.temperature,
             mode_spec["dry_radius_um"],
         )

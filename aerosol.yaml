@@ -234,11 +234,11 @@ Schemes:
             du3: {name: Dust bin 3, dry_radius_um: 2.40, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
             du4: {name: Dust bin 4, dry_radius_um: 4.50, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
             du5: {name: Dust bin 5, dry_radius_um: 8.00, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
-            ss1: {name: Sea salt bin 1, dry_radius_um: 0.08, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
-            ss2: {name: Sea salt bin 2, dry_radius_um: 0.30, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
-            ss3: {name: Sea salt bin 3, dry_radius_um: 1.00, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
-            ss4: {name: Sea salt bin 4, dry_radius_um: 3.00, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
-            ss5: {name: Sea salt bin 5, dry_radius_um: 8.00, sigma_g: 1.0, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
+            ss1: {name: Sea salt bin 1, dry_radius_um: 0.08, sigma_g: 1.0, rh_growth_cap: 0.95, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
+            ss2: {name: Sea salt bin 2, dry_radius_um: 0.30, sigma_g: 1.0, rh_growth_cap: 0.95, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
+            ss3: {name: Sea salt bin 3, dry_radius_um: 1.00, sigma_g: 1.0, rh_growth_cap: 0.95, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
+            ss4: {name: Sea salt bin 4, dry_radius_um: 3.00, sigma_g: 1.0, rh_growth_cap: 0.95, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
+            ss5: {name: Sea salt bin 5, dry_radius_um: 8.00, sigma_g: 1.0, rh_growth_cap: 0.95, filename_sarb: "${HOME}/Data/Optics/SARB/mam4_mono_larc_c000003.v2.nc"}
         allocations:
             SO4: {a1: 0.90, a2: 0.10, a3: 0.00, a4: 0.00}
             OCPHILIC: {a1: 1.00}

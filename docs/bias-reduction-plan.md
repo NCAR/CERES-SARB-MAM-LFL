@@ -62,6 +62,24 @@ input; check each bin and the sea-salt total against alpha_4 (SS001–005).
 `verify_physics` is unaffected — the cap is an input clip ahead of the
 (unchanged) Köhler solver, so stage E monotonicity/residual still hold.
 
+**Status: implemented & validated (2026-06-22, sea salt only).** `rh_growth_cap:
+0.95` added to the ss1–ss5 bins in both configs; `compute_mode_dataset`
+(`mode_optics.py`) clips RH to the cap before the growth solve when a mode
+carries it. Re-running the slice through the real pipeline (uncapped run
+reproduces the original MAM ss values exactly):
+
+| | uncapped | cap@0.95 | alpha_4 |
+| --- | ---: | ---: | ---: |
+| ss3 | 0.07324 | 0.01630 | 0.01216 |
+| sea-salt total | 0.11635 | **0.03844** | 0.03246 |
+
+Sea salt drops from 3.6× to **1.18×** of reference; the residual is the
+predicted baseline (monodisperse single-particle Mie vs GOCART bin-integrated).
+`verify_physics` 50 PASS / 0 FAIL / 6 FINDING and 100 unit tests unchanged. The
+total now *undershoots* (~0.11) because the internal deficit (Fix 2) is still
+open — as expected. Stored `~/Data/GEOSIT_MAM` AER files are still uncapped; a
+full mode-optics regen is needed to refresh them and the spatial figures.
+
 ## Fix 2 — internal modes: recover the 2.5× MEE deficit
 
 **Root cause (validated, structural — not the old LUT bug).** These files are
