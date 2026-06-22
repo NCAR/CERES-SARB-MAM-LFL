@@ -467,6 +467,23 @@ def _area_mean(da):
     return float(da.weighted(np.cos(np.deg2rad(da["lat"]))).mean())
 
 
+def _coarsen_to_reference(col, ref):
+    """Coarsen a native L576x361 column field onto the reference L288x180 grid
+    with the *same* operator as species_optics.py: a latitude 1/4-1/2-1/4
+    adjacent-midpoint stencil and longitude stride-2 decimation. Returns a
+    DataArray carrying the reference's lat/lon so differences align exactly
+    (apples-to-apples with the reference's own coarsening)."""
+    v = np.asarray(col.values, dtype=np.float64)
+    v_mid = 0.5 * (v[:-1, :] + v[1:, :])            # 361 -> 360 lat midpoints
+    v_sub = 0.5 * (v_mid[:-1:2, :] + v_mid[1::2, :])  # 360 -> 180 lat pairs
+    v_sub = v_sub[:, ::2]                            # 576 -> 288 lon (decimate)
+    if v_sub.shape != (ref["lat"].size, ref["lon"].size):
+        raise ValueError("coarsened MAM %s != reference grid %s"
+                         % (v_sub.shape, (ref["lat"].size, ref["lon"].size)))
+    return xr.DataArray(v_sub, dims=["lat", "lon"],
+                        coords={"lat": ref["lat"], "lon": ref["lon"]})
+
+
 def fig_aod_maps(outdir):
     try:
         import cartopy.crs as ccrs
@@ -479,7 +496,7 @@ def fig_aod_maps(outdir):
         print("  skipping maps (slice/reference missing)")
         return
     mam, ref = _column_aod(mam_p), _column_aod(ref_p)
-    diff = mam.interp(lat=ref["lat"], lon=ref["lon"], method="linear") - ref
+    diff = _coarsen_to_reference(mam, ref) - ref
     m_mam, m_ref, m_diff = _area_mean(mam), _area_mean(ref), _area_mean(diff)
 
     proj = ccrs.PlateCarree()
@@ -515,7 +532,7 @@ def fig_aod_zonal(outdir):
         print("  skipping zonal (slice/reference missing)")
         return
     mam, ref = _column_aod(mam_p), _column_aod(ref_p)
-    zm_mam = mam.interp(lat=ref["lat"], lon=ref["lon"], method="linear").mean("lon")
+    zm_mam = _coarsen_to_reference(mam, ref).mean("lon")
     zm_ref = ref.mean("lon")
     lat = ref["lat"].values
     fig, ax = plt.subplots(figsize=(7.2, 5.2))

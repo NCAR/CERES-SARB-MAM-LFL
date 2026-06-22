@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 
 
 def lognormal_volume_factor(dry_radius_um, sigma_g):
@@ -114,7 +115,7 @@ def _mixed_hygroscopicity(species_info, q, rh):
     ).astype(np.float32)
 
 
-def kohler_wet_radius_um(dry_radius_um, hygroscopicity, rh, temperature):
+def _kohler_wet_radius_um_exact(dry_radius_um, hygroscopicity, rh, temperature):
     dry_radius_m = float(dry_radius_um) * 1.0e-6
     if not np.isfinite(dry_radius_m) or dry_radius_m <= 0.0:
         raise ValueError("dry_radius_um must be positive")
@@ -162,6 +163,127 @@ def kohler_wet_radius_um(dry_radius_um, hygroscopicity, rh, temperature):
     wet = np.where(active, 0.5 * (low + high), wet)
     wet = np.where(np.isfinite(wet), wet, dry_radius_m)
     return (wet * 1.0e6).astype(np.float32)
+
+
+# --------------------------------------------------------------------------- #
+# Köhler growth-factor lookup table (LUT-warm-started Newton solve)
+#
+# The Köhler equation is scale-free in the growth factor GF = r_w / r_d:
+#     ln(RH) = a/GF - B/(GF**3 - 1),   a = A/r_d   (A = Kelvin coefficient).
+# So GF depends only on the three dimensionless inputs (a, B, RH). We tabulate
+# GF on (ln a, B, s) with s = -ln(1-RH) (which spreads the steep RH->1 growth),
+# look it up as a warm start, then run a few Newton steps on the exact equation
+# so the result matches the bisection to machine precision and stays monotone.
+# --------------------------------------------------------------------------- #
+# Kelvin coefficient A (metres) = _KELVIN_A_NUM / T, with radius in metres.
+_KELVIN_A_NUM = 2.0 * 18.016 * 0.076 / (8.3143e3 * 1000.0)
+_GF_LUT = None  # cache: (interp, log_a_min, log_a_max, b_max, s_max)
+
+
+def _koehler_gf_solve(a, hygroscopicity, log_rh, iters=100):
+    """Vectorised nondimensional Köhler bisection for GF = r_w/r_d.
+
+    Solves ``ln RH = a/GF - B/(GF**3 - 1)`` (same equation, same bracketing as
+    ``_kohler_wet_radius_um_exact``). Used to build the LUT; GF=1 where inactive.
+    """
+    a, b, log_rh = np.broadcast_arrays(
+        np.asarray(a, dtype=np.float64),
+        np.asarray(hygroscopicity, dtype=np.float64),
+        np.asarray(log_rh, dtype=np.float64),
+    )
+    gf = np.ones(a.shape, dtype=np.float64)
+    active = (b > 0.0) & (log_rh < 0.0)
+    if not np.any(active):
+        return gf
+    neg_log_rh = np.maximum(-log_rh, 1.0e-12)
+    low = np.full(a.shape, 1.0 + 1.0e-9)
+    high = np.maximum(2.0, 2.0 * np.cbrt(1.0 + b / neg_log_rh))
+    for _ in range(iters):
+        mid = 0.5 * (low + high)
+        residual = a / mid - b / (mid ** 3 - 1.0) - log_rh
+        high = np.where(active & (residual > 0.0), mid, high)
+        low = np.where(active & (residual <= 0.0), mid, low)
+    return np.where(active, 0.5 * (low + high), 1.0)
+
+
+def _koehler_gf_lut(n_a=48, n_b=64, n_s=160):
+    """Build (once) and cache a trilinear ln(GF) table over (ln a, B, s)."""
+    global _GF_LUT
+    if _GF_LUT is not None:
+        return _GF_LUT
+    a_grid = np.geomspace(1.0e-4, 1.0, n_a)
+    b_grid = np.concatenate([[0.0], np.geomspace(1.0e-3, 8.0, n_b - 1)])
+    s_grid = np.linspace(0.0, 14.0, n_s)  # s=-ln(1-RH); RH up to 1-8.3e-7
+    aa, bb, ss = np.meshgrid(a_grid, b_grid, s_grid, indexing="ij")
+    rh = 1.0 - np.exp(-ss)
+    log_rh = np.log(np.clip(rh, 1.0e-12, 1.0 - 1.0e-6))
+    gf = _koehler_gf_solve(aa, bb, log_rh)
+    interp = RegularGridInterpolator(
+        (np.log(a_grid), b_grid, s_grid), np.log(gf),
+        method="linear", bounds_error=False, fill_value=None)
+    _GF_LUT = (interp, float(np.log(a_grid[0])), float(np.log(a_grid[-1])),
+               float(b_grid[-1]), float(s_grid[-1]))
+    return _GF_LUT
+
+
+def _kohler_wet_radius_um_lut(dry_radius_um, hygroscopicity, rh, temperature,
+                              newton=4):
+    """Köhler wet radius via a LUT warm start + Newton polish on the exact
+    equation. Matches the bisection to machine precision while replacing 80
+    iterations with one table lookup plus ``newton`` Newton steps."""
+    r_d_um = float(dry_radius_um)
+    if not np.isfinite(r_d_um) or r_d_um <= 0.0:
+        raise ValueError("dry_radius_um must be positive")
+    interp, log_a_min, log_a_max, b_max, s_max = _koehler_gf_lut()
+
+    rh_arr, b_arr, t_arr = np.broadcast_arrays(
+        np.asarray(rh, dtype=np.float64),
+        np.asarray(hygroscopicity, dtype=np.float64),
+        np.asarray(temperature, dtype=np.float64),
+    )
+    rh_safe = np.clip(np.where(np.isfinite(rh_arr), rh_arr, 0.0), 0.0, 1.0 - 1.0e-6)
+    b_safe = np.maximum(np.where(np.isfinite(b_arr), b_arr, 0.0), 0.0)
+    t_safe = np.clip(np.where(np.isfinite(t_arr), t_arr, 280.0), 180.0, 330.0)
+    active = (b_safe > 0.0) & (rh_safe > 0.0)
+
+    log_rh = np.log(np.clip(rh_safe, 1.0e-12, 1.0 - 1.0e-6))
+    a = _KELVIN_A_NUM / (t_safe * r_d_um * 1.0e-6)
+    s = -np.log(np.maximum(1.0 - rh_safe, 1.0e-12))
+
+    pts = np.column_stack([
+        np.clip(np.log(a), log_a_min, log_a_max).ravel(),
+        np.clip(b_safe, 0.0, b_max).ravel(),
+        np.clip(s, 0.0, s_max).ravel(),
+    ])
+    gf = np.maximum(np.exp(interp(pts)).reshape(rh_safe.shape), 1.0 + 1.0e-12)
+
+    # Newton polish on the singularity-free form
+    #     g(GF) = (a/GF - ln RH)(GF^3 - 1) - B,
+    # which is smooth and monotone even as GF -> 1 (where the raw Köhler
+    # residual a/GF - B/(GF^3-1) - ln RH is stiff). One step from GF=1 already
+    # lands at the small-growth limit 1 + B/(3(a - ln RH)).
+    for _ in range(int(newton)):
+        g3 = gf ** 3 - 1.0
+        term = a / gf - log_rh
+        g = term * g3 - b_safe
+        gp = -a / gf ** 2 * g3 + term * 3.0 * gf ** 2
+        step = np.where(active & (gp > 0.0), g / gp, 0.0)
+        gf = np.maximum(gf - step, 1.0 + 1.0e-12)
+
+    gf = np.where(active, gf, 1.0)
+    return (r_d_um * gf).astype(np.float32)
+
+
+def kohler_wet_radius_um(dry_radius_um, hygroscopicity, rh, temperature,
+                         method="lut"):
+    """Köhler equilibrium wet radius (µm).
+
+    ``method='lut'`` (default, production) uses the cached growth-factor table
+    with Newton polish; ``method='exact'`` uses the reference bisection.
+    """
+    if method == "exact":
+        return _kohler_wet_radius_um_exact(dry_radius_um, hygroscopicity, rh, temperature)
+    return _kohler_wet_radius_um_lut(dry_radius_um, hygroscopicity, rh, temperature)
 
 
 def mix_mode_state(species_info, q, refractive, rh, temperature, dry_radius_um):
