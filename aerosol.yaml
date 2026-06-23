@@ -154,6 +154,9 @@ Sources:
             temperature: T
             delp: DELP
             ps: PS
+            # GEOS-IT aer_inst carries no T; air density lets source_fields
+            # reconstruct T = P/(R_d*rho) from the hydrostatic pressure grid.
+            airdens: AIRDENS
         species:
             SO4: SO4
             OCPHOBIC: OCPHOBIC

@@ -100,6 +100,30 @@ def save(fig, outdir, name):
     print("  %s.{pdf,png}" % name)
 
 
+def add_coastlines(ax, linewidth=0.4):
+    """Draw coastlines robustly. ``ax.coastlines()`` routes through cartopy's
+    downloader, which fails in offline/locked-down environments even when the
+    Natural Earth shapefiles are already cached; read the cached shapefile
+    directly first, fall back to the downloader, then degrade gracefully."""
+    try:
+        import cartopy.crs as ccrs
+        from cartopy import config as _cconfig
+        from cartopy.io.shapereader import Reader
+        from cartopy.feature import ShapelyFeature
+        base = os.path.join(_cconfig["data_dir"], "shapefiles",
+                            "natural_earth", "physical")
+        for res in ("110m", "50m"):
+            shp = os.path.join(base, "ne_%s_coastline.shp" % res)
+            if os.path.exists(shp):
+                feat = ShapelyFeature(Reader(shp).geometries(), ccrs.PlateCarree(),
+                                      edgecolor="k", facecolor="none", linewidth=linewidth)
+                ax.add_feature(feat)
+                return
+        ax.coastlines(linewidth=linewidth)
+    except Exception as exc:
+        print("  (coastlines unavailable: %s; drawing maps without them)" % exc)
+
+
 # --------------------------------------------------------------------------- #
 def fig_size_distributions(outdir, config):
     modes = config["Schemes"]["MAM4"]["modes"]
@@ -532,13 +556,13 @@ def fig_aod_maps(outdir):
         ax.set_facecolor("0.6")
         base = ax.contourf(*np.meshgrid(lon_c, da["lat"].values), vals_c, levels,
                            cmap="turbo", extend="max", transform=proj)
-        ax.coastlines(linewidth=0.4)
+        add_coastlines(ax)
         ax.set_title("%s   $\\overline{\\tau}=%.3f$" % (title, mean))
     vals_d, lon_d = add_cyclic_point(diff.values, coord=diff["lon"].values)
     axes[2].set_facecolor("0.6")
     cfd = axes[2].contourf(*np.meshgrid(lon_d, diff["lat"].values), vals_d, dlev,
                            cmap="RdBu_r", extend="both", transform=proj)
-    axes[2].coastlines(linewidth=0.4)
+    add_coastlines(axes[2])
     axes[2].set_title("MAM $-$ Reference   $\\Delta\\overline{\\tau}=%+.3f$" % m_diff)
     cb1 = fig.colorbar(base, ax=axes[:2], orientation="horizontal", pad=0.05, shrink=0.6, aspect=40)
     cb1.set_label("Column AOD")
@@ -571,11 +595,145 @@ def fig_aod_zonal(outdir):
     save(fig, outdir, "aod_zonal")
 
 
+# --- multi-band spatial maps (per-band AER_MAM4 run outputs) -----------------
+# Spectral midpoints (um) of the produced LFL bands, from LFL_SW/LW_bands.
+BAND_WAVELENGTH_UM = {
+    "SW02": 0.340, "SW05": 0.546, "SW09": 0.966, "SW12": 2.202, "LW06": 9.645,
+}
+BAND_PLOT_ORDER = ["SW02", "SW05", "SW09", "SW12", "LW06"]
+BAND_FILE_PREFIX = "GEOS.it.asm.aer_inst_3hr_glo_L576x361_v72.GEOS5294"
+BAND_STAMP = "2008-07-01T0000"
+# Wavelength pair for the Angstrom-exponent map (visible -> NIR).
+ANGSTROM_PAIR = ("SW02", "SW09")
+
+
+def _band_path(run_dir, band):
+    return os.path.join(os.path.expanduser(run_dir),
+                        "%s.AER_MAM4_%s.%s.V01.nc4" % (BAND_FILE_PREFIX, band, BAND_STAMP))
+
+
+def _available_bands(run_dir):
+    return [b for b in BAND_PLOT_ORDER if os.path.exists(_band_path(run_dir, b))]
+
+
+def _col_from_ds(ds):
+    col = ds["Extinction_Column_Optical_Depth"]
+    if "time" in col.dims:
+        col = col.isel(time=0)
+    return col.load()
+
+
+def _column_ssa(ds):
+    """Column single-scattering albedo = sum(scattering)/sum(extinction) over
+    levels, masked where the column extinction is negligible."""
+    ext = ds["Extinction_Layer_Optical_Depth"]
+    sca = ds["Scattering_Layer_Optical_Depth"]
+    if "time" in ext.dims:
+        ext = ext.isel(time=0)
+        sca = sca.isel(time=0)
+    ext_c = ext.sum("lev")
+    sca_c = sca.sum("lev")
+    return xr.where(ext_c > 1.0e-4, sca_c / ext_c, np.nan).load()
+
+
+def _map_panels(panels, levels, cmap, extend, cbar_label, suptitle, outdir, name):
+    """Render (title, DataArray[lat,lon]) panels as a shared-colorbar map grid."""
+    try:
+        from cartopy.util import add_cyclic_point
+        import cartopy.crs as ccrs
+    except Exception as exc:
+        print("  skipping %s (cartopy import failed): %s" % (name, exc))
+        return
+    proj = ccrs.PlateCarree()
+    n = len(panels)
+    ncols = min(3, n)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.4 * ncols, 3.2 * nrows + 0.7),
+                             subplot_kw={"projection": proj}, squeeze=False)
+    axes_flat = list(axes.ravel())
+    mappable = None
+    for ax, (title, da) in zip(axes_flat, panels):
+        vals, lon = add_cyclic_point(da.values, coord=da["lon"].values)
+        ax.set_facecolor("0.6")
+        mappable = ax.contourf(*np.meshgrid(lon, da["lat"].values), vals, levels,
+                               cmap=cmap, extend=extend, transform=proj)
+        add_coastlines(ax)
+        ax.set_title(title)
+    for ax in axes_flat[n:]:
+        ax.set_visible(False)
+    cb = fig.colorbar(mappable, ax=axes_flat[:n], orientation="horizontal",
+                      pad=0.04, shrink=0.55, aspect=45)
+    cb.set_label(cbar_label)
+    fig.suptitle(suptitle, fontweight="bold")
+    save(fig, outdir, name)
+
+
+def fig_band_aod_maps(outdir, run_dir):
+    bands = _available_bands(run_dir)
+    if not bands:
+        print("  skipping band_aod_maps (no AER_MAM4 band files in %s)" % run_dir)
+        return
+    panels = []
+    for b in bands:
+        ds = xr.open_dataset(_band_path(run_dir, b))
+        col = _col_from_ds(ds)
+        panels.append(("%s  %.3f $\\mu$m   $\\overline{\\tau}=%.3f$"
+                       % (b, BAND_WAVELENGTH_UM[b], _area_mean(col)), col))
+        ds.close()
+    _map_panels(panels, np.arange(0, 1.0001, 0.05), "turbo", "max", "Column AOD",
+                "Column AOD by band (MAM, GEOS-IT 2008-07-01 00Z, SW05-anchored)",
+                outdir, "band_aod_maps")
+
+
+def fig_band_ssa_maps(outdir, run_dir):
+    bands = _available_bands(run_dir)
+    if not bands:
+        print("  skipping band_ssa_maps (no AER_MAM4 band files in %s)" % run_dir)
+        return
+    panels = []
+    for b in bands:
+        ds = xr.open_dataset(_band_path(run_dir, b))
+        ssa = _column_ssa(ds)
+        panels.append(("%s  %.3f $\\mu$m   $\\overline{\\omega}=%.3f$"
+                       % (b, BAND_WAVELENGTH_UM[b], _area_mean(ssa)), ssa))
+        ds.close()
+    # Non-uniform levels: most aerosol is weakly absorbing (omega~0.95-1) so the
+    # interesting structure lives near the top of the range; LW is far lower.
+    levels = [0.70, 0.80, 0.86, 0.90, 0.93, 0.95, 0.96, 0.97, 0.98, 0.99, 0.995, 1.0]
+    _map_panels(panels, levels, "viridis", "min", "Column single-scattering albedo $\\omega_0$",
+                "Column SSA by band (MAM, GEOS-IT 2008-07-01 00Z)",
+                outdir, "band_ssa_maps")
+
+
+def fig_band_angstrom_map(outdir, run_dir):
+    b1, b2 = ANGSTROM_PAIR
+    if not (os.path.exists(_band_path(run_dir, b1)) and os.path.exists(_band_path(run_dir, b2))):
+        print("  skipping band_angstrom_map (need %s and %s)" % (b1, b2))
+        return
+    ds1 = xr.open_dataset(_band_path(run_dir, b1))
+    ds2 = xr.open_dataset(_band_path(run_dir, b2))
+    t1 = _col_from_ds(ds1)
+    t2 = _col_from_ds(ds2)
+    ds1.close()
+    ds2.close()
+    w1, w2 = BAND_WAVELENGTH_UM[b1], BAND_WAVELENGTH_UM[b2]
+    valid = (t1 > 1.0e-3) & (t2 > 1.0e-3)
+    ang = xr.where(valid, -np.log(t2 / t1) / np.log(w2 / w1), np.nan)
+    _map_panels([("$\\alpha$(%.2f, %.2f $\\mu$m)   $\\overline{\\alpha}=%.2f$"
+                  % (w1, w2, _area_mean(ang)), ang)],
+                np.arange(-0.5, 2.51, 0.25), "Spectral_r", "both",
+                "Ångström exponent $\\alpha$",
+                "Ångström exponent %.2f$-$%.2f $\\mu$m (MAM, 2008-07-01 00Z)"
+                % (w1, w2), outdir, "band_angstrom_map")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--outdir", default=os.path.expanduser("~/Plots/verification"))
     parser.add_argument("--aerosol", default="aerosol.yaml")
     parser.add_argument("--optics-dir", default=os.path.expanduser("~/Data/Optics/SARB"))
+    parser.add_argument("--band-run-dir", default=os.path.expanduser("~/Data/GEOSIT_MAM/2008/07"),
+                        help="directory holding the per-band AER_MAM4_<BAND> run outputs")
     args = parser.parse_args(argv)
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -595,6 +753,9 @@ def main(argv=None):
     fig_aod_components(args.outdir)
     fig_aod_maps(args.outdir)
     fig_aod_zonal(args.outdir)
+    fig_band_aod_maps(args.outdir, args.band_run_dir)
+    fig_band_ssa_maps(args.outdir, args.band_run_dir)
+    fig_band_angstrom_map(args.outdir, args.band_run_dir)
     print("done")
     return 0
 

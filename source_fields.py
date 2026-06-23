@@ -56,6 +56,54 @@ def _required_field_name(source_spec, field_name):
     return fields[field_name]
 
 
+DRY_AIR_GAS_CONSTANT = 287.05  # J kg-1 K-1
+# GEOS-IT 72-level model top. PS - sum(DELP) only recovers this to ~+/-20 Pa
+# (float32 rounding over 72 summed layers), and that scatter blows up T in the
+# near-vacuum top layers, so anchor on the known fixed value instead.
+MODEL_TOP_PA = 1.0
+# Physical guard mirroring the Kohler solver's own clamp (mode_physics); keeps
+# the residual top-of-atmosphere ill-conditioning out of the stored field.
+TEMPERATURE_BOUNDS_K = (180.0, 330.0)
+
+
+def _lev_axis(reference_da, source_spec):
+    lev_name = source_spec.get("dims", {}).get("lev", "lev")
+    if lev_name not in reference_da.dims:
+        raise ValueError("lev dim %r not found in %s" % (lev_name, reference_da.name))
+    return reference_da.dims.index(lev_name)
+
+
+def _derive_temperature_from_density(ds, source_spec, reference_da, rh, delp):
+    """Reconstruct air temperature from density and the hydrostatic pressure grid.
+
+    GEOS-IT ``aer_inst`` carries no air temperature, only air density (AIRDENS)
+    and the layer pressure thickness (DELP). The mid-layer pressure follows from
+    a top-of-atmosphere anchor ``PTOP = PS - sum(DELP)`` plus the running DELP
+    integral, and the ideal-gas law gives ``T = P / (R_d * rho)``. This is far
+    more faithful for the Kohler growth than a constant fallback. Returns None
+    when the required fields are absent so the caller can fall back.
+    """
+    fields = source_spec.get("fields", {})
+    density_var = fields.get("airdens", "AIRDENS")
+    if density_var not in ds:
+        return None
+
+    density_da = _require_var(ds, density_var)
+    _validate_like(reference_da, density_da, density_var)
+    density = _as_float32_array(density_da).astype(np.float64)
+
+    axis = _lev_axis(reference_da, source_spec)
+    delp64 = delp.astype(np.float64)
+    # Mid-layer pressure from the fixed model top down: PTOP + cumsum(DELP) - DELP/2.
+    # Layers are ordered top -> bottom (lev positive = down).
+    p_mid = MODEL_TOP_PA + np.cumsum(delp64, axis=axis) - 0.5 * delp64
+    with np.errstate(divide="ignore", invalid="ignore"):
+        temperature = p_mid / (density * DRY_AIR_GAS_CONSTANT)
+    lo, hi = TEMPERATURE_BOUNDS_K
+    temperature = np.where(np.isfinite(temperature), temperature, lo)
+    return np.clip(temperature, lo, hi).astype(np.float32)
+
+
 def read_source_fields_from_dataset(ds, source_spec, species_names):
     rh_var = _required_field_name(source_spec, "rh")
     delp_var = _required_field_name(source_spec, "delp")
@@ -74,7 +122,9 @@ def read_source_fields_from_dataset(ds, source_spec, species_names):
         _validate_like(rh_da, temperature_da, temperature_var)
         temperature = _as_float32_array(temperature_da)
     else:
-        temperature = np.full_like(rh, 273.15, dtype=np.float32)
+        temperature = _derive_temperature_from_density(ds, source_spec, rh_da, rh, delp)
+        if temperature is None:
+            temperature = np.full_like(rh, 273.15, dtype=np.float32)
 
     species_mapping = source_spec.get("species", {})
     species = {}

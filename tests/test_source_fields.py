@@ -8,7 +8,7 @@ from source_fields import open_source_fields, read_source_fields_from_dataset
 
 
 class TestSourceFields(unittest.TestCase):
-    def native_dataset(self, include_temperature=True, include_delp=True):
+    def native_dataset(self, include_temperature=True, include_delp=True, airdens=None):
         dims = ("time", "lev", "lat", "lon")
         shape = (1, 2, 2, 3)
         coords = {
@@ -26,6 +26,8 @@ class TestSourceFields(unittest.TestCase):
             data_vars["T"] = (dims, np.full(shape, 280.0, dtype=np.float32))
         if include_delp:
             data_vars["DELP"] = (dims, np.full(shape, 100.0, dtype=np.float32))
+        if airdens is not None:
+            data_vars["AIRDENS"] = (dims, np.asarray(airdens, dtype=np.float32).reshape(shape))
         return xr.Dataset(data_vars=data_vars, coords=coords)
 
     def source_spec(self):
@@ -113,6 +115,41 @@ class TestSourceFields(unittest.TestCase):
         fields = read_source_fields_from_dataset(ds, self.source_spec(), ["SO4"])
 
         np.testing.assert_allclose(fields.temperature, np.full_like(fields.rh, 273.15))
+
+    def test_temperature_derived_from_density_when_no_temperature(self):
+        # Two layers of DELP=100 Pa, top->bottom; model top = 1 Pa, so the
+        # mid-layer pressures are 51 Pa (top) and 151 Pa (bottom). Choose the
+        # density per layer to land on T = 200 K (top) and 300 K (bottom).
+        rd = 287.05
+        rho_top = 51.0 / (rd * 200.0)
+        rho_bot = 151.0 / (rd * 300.0)
+        airdens = np.empty((1, 2, 2, 3), dtype=np.float32)
+        airdens[:, 0, :, :] = rho_top
+        airdens[:, 1, :, :] = rho_bot
+        ds = self.native_dataset(include_temperature=False, airdens=airdens)
+        spec = self.source_spec()
+        spec["fields"]["airdens"] = "AIRDENS"
+
+        fields = read_source_fields_from_dataset(ds, spec, ["SO4"])
+
+        self.assertFalse(np.allclose(fields.temperature, 273.15))
+        np.testing.assert_allclose(fields.temperature[:, 0, :, :], 200.0, rtol=1e-4)
+        np.testing.assert_allclose(fields.temperature[:, 1, :, :], 300.0, rtol=1e-4)
+
+    def test_derived_temperature_clamped_to_physical_bounds(self):
+        # Near-vacuum density -> runaway T (top) and huge density -> ~0 T must
+        # both be clamped into the physical band the Kohler solver expects.
+        airdens = np.empty((1, 2, 2, 3), dtype=np.float32)
+        airdens[:, 0, :, :] = 1.0e-10  # blows T up
+        airdens[:, 1, :, :] = 1.0e3    # collapses T to ~0
+        ds = self.native_dataset(include_temperature=False, airdens=airdens)
+        spec = self.source_spec()
+        spec["fields"]["airdens"] = "AIRDENS"
+
+        fields = read_source_fields_from_dataset(ds, spec, ["SO4"])
+
+        self.assertEqual(float(fields.temperature.max()), 330.0)
+        self.assertEqual(float(fields.temperature.min()), 180.0)
 
     def test_missing_required_variable_raises(self):
         ds = self.native_dataset(include_delp=False)
