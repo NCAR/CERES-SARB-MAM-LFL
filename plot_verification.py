@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from mode_config import load_config, resolved_allocations
-from mode_physics import kohler_wet_radius_um, mix_mode_state
+from mode_physics import kohler_wet_radius_um, mix_mode_state, _mixed_hygroscopicity
 from mode_optics import _mode_species, _species_info, _type_key
 from mie_sphere import mie_efficiencies, mie_cross_sections_um2
 from mie_lognormal import mode_averaged_cross_sections_um2
@@ -51,6 +51,76 @@ SPECIES_COLOR = {
     "Water": "#74A9CF",         # light blue
 }
 SW05_UM = 0.54625
+
+
+# --------------------------------------------------------------------------- #
+# Prescribed modal mixtures: per-mode composition (for pies) and volume-weighted
+# hygroscopicity (for the Köhler / growth curves). Built from REP_MASS x the
+# prescribed allocation -- the same representative composition the optics
+# figures use -- so the curves and pies describe the actual modal mixtures.
+# --------------------------------------------------------------------------- #
+_TYPE_FAMILY = {"SU": "Sulfate", "NI": "Nitrate", "POM": "Organic", "SOA": "Organic",
+                "BC": "Black Carbon", "DU": "Dust", "SS": "Sea Salt"}
+_INTERNAL_MODES = [("a1", "Accumulation"), ("a2", "Aitken"),
+                   ("a3", "Coarse"), ("a4", "Primary Carbon")]
+_PIE_FAMILY_ORDER = ["Sulfate", "Organic", "Black Carbon", "Nitrate", "Dust", "Sea Salt"]
+
+
+def _mode_mix_q(config, mode):
+    """Representative dry-mass dict (REP_MASS x allocation) for one mode, keeping
+    only the species that carry mass -- the prescribed internal mixture."""
+    alloc = resolved_allocations(config, "MAM4")
+    q = {s: _REP_MASS.get(s, 0.0) * float(alloc[s].get(mode, 0.0))
+         for s in _mode_species(config, "MAM4", mode)}
+    return {s: m for s, m in q.items() if m > 0.0}
+
+
+def _mode_mass_composition(config, mode):
+    """Prescribed dry-mass fractions of a mode aggregated by species family."""
+    fam = {}
+    for s, m in _mode_mix_q(config, mode).items():
+        key = _TYPE_FAMILY[_type_key(s)]
+        fam[key] = fam.get(key, 0.0) + m
+    total = sum(fam.values())
+    return {f: v / total for f, v in fam.items()} if total > 0.0 else {}
+
+
+def _mode_mixed_B(config, mode, rh):
+    """Volume-weighted hygroscopic growth coefficient B(RH) of a mode's
+    prescribed mixture (same rule as the production mix_mode_state)."""
+    q = {s: np.array([m], dtype=np.float32) for s, m in _mode_mix_q(config, mode).items()}
+    info = _species_info(config, list(q))
+    return _mixed_hygroscopicity(info, q, np.asarray(rh, dtype=np.float32))
+
+
+def _species_B(config, tkey, rh):
+    """Pure-species B(RH) from a Type's hygroscopicity polynomial."""
+    b = list(config["Types"][tkey]["hygroscopicity"]) + [0.0, 0.0]
+    rh = np.asarray(rh, dtype=np.float64)
+    return float(b[0]) + float(b[1]) * rh + float(b[2]) * rh ** 2
+
+
+def _draw_mode_pies(fig, pie_axes, config, modes=_INTERNAL_MODES,
+                    legend_title="Prescribed Mode Composition (Dry Mass)"):
+    """Draw one prescribed dry-mass composition pie per mode into ``pie_axes``
+    and add a shared species-family colour key beneath them."""
+    seen = []
+    for ax, (mkey, mname) in zip(pie_axes, modes):
+        comp = _mode_mass_composition(config, mkey)
+        ax.set(frame_on=False); ax.set_xticks([]); ax.set_yticks([]); ax.grid(False)
+        if not comp:
+            continue
+        fams = [f for f in _PIE_FAMILY_ORDER if f in comp]
+        ax.pie([comp[f] for f in fams], colors=[SPECIES_COLOR[f] for f in fams],
+               startangle=90, counterclock=False,
+               wedgeprops=dict(edgecolor="white", linewidth=0.6))
+        ax.set_title(mname, fontsize=10, pad=1)
+        ax.set_aspect("equal")
+        seen += [f for f in fams if f not in seen]
+    order = [f for f in _PIE_FAMILY_ORDER if f in seen]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=SPECIES_COLOR[f]) for f in order]
+    fig.legend(handles, order, loc="lower center", ncol=len(order) or 1, frameon=True,
+               bbox_to_anchor=(0.5, -0.02), title=legend_title)
 
 
 def apply_style():
@@ -149,45 +219,53 @@ def fig_size_distributions(outdir, config):
     save(fig, outdir, "size_distributions")
 
 
-def fig_hygroscopicity(outdir):
+def fig_hygroscopicity(outdir, config):
     rh = np.linspace(0.0, 1.0, 101)
-    species = [
-        ("Sulfate", [2.42848, -3.85261, 1.88159], SPECIES_COLOR["Sulfate"]),
-        ("Sea Salt", [4.83257, -6.92329, 3.27805], SPECIES_COLOR["Sea Salt"]),
-        ("Organic", [0.14, 0.0, 0.0], SPECIES_COLOR["Organic"]),
-        ("Black Carbon", [0.01, 0.0, 0.0], SPECIES_COLOR["Black Carbon"]),
-    ]
-    fig, ax = plt.subplots(figsize=(7, 4.6))
-    for label, (b0, b1, b2), c in species:
-        ax.plot(rh, b0 + b1 * rh + b2 * rh ** 2, color=c, label=label)
+    fig = plt.figure(figsize=(8.5, 6.2))
+    gs = fig.add_gridspec(2, 4, height_ratios=[3.0, 1.3], hspace=0.55, wspace=0.4)
+    ax = fig.add_subplot(gs[0, :])
+    pie_axes = [fig.add_subplot(gs[1, i]) for i in range(4)]
+    for mkey, mname in _INTERNAL_MODES:
+        ax.plot(rh, _mode_mixed_B(config, mkey, rh), color=MODE_COLOR[mname], label=mname)
+    for tkey, fam in [("SU", "Sulfate"), ("SS", "Sea Salt"),
+                      ("POM", "Organic"), ("BC", "Black Carbon")]:
+        ax.plot(rh, _species_B(config, tkey, rh), color=SPECIES_COLOR[fam],
+                lw=1.0, ls=(0, (4, 2)), alpha=0.55, label="%s (Pure)" % fam)
     ax.set_xlabel("Relative Humidity"); ax.set_ylabel("Hygroscopic Growth Coefficient $B$")
-    ax.set_title("Hygroscopicity")
-    ax.legend(frameon=True); ax.set_ylim(bottom=0)
+    ax.set_title("Hygroscopicity of the Prescribed Modal Mixtures")
+    ax.legend(frameon=True, fontsize=8, ncol=2); ax.set_ylim(bottom=0)
+    _draw_mode_pies(fig, pie_axes, config)
     save(fig, outdir, "hygroscopicity")
 
 
-def fig_kohler(outdir):
+def fig_kohler(outdir, config):
     rh = np.linspace(0.05, 0.985, 160).astype(np.float32)
     T = np.full_like(rh, 290.0)
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
-    for name, B, c in [("Black Carbon", 0.01, SPECIES_COLOR["Black Carbon"]),
-                       ("Dust", 0.14, SPECIES_COLOR["Dust"]),
-                       ("Sulfate", 0.6, SPECIES_COLOR["Sulfate"]),
-                       ("Sea Salt", 1.2, SPECIES_COLOR["Sea Salt"])]:
-        w = kohler_wet_radius_um(0.055, np.full_like(rh, B), rh, T)
-        ax1.plot(rh, w / 0.055, color=c, label="%s ($\\kappa = %g$)" % (name, B))
+    modes = config["Schemes"]["MAM4"]["modes"]
+    fig = plt.figure(figsize=(11, 6.4))
+    gs = fig.add_gridspec(2, 4, height_ratios=[3.0, 1.3], hspace=0.5, wspace=0.35)
+    ax1 = fig.add_subplot(gs[0, 0:2]); ax2 = fig.add_subplot(gs[0, 2:4])
+    pie_axes = [fig.add_subplot(gs[1, i]) for i in range(4)]
+    # Primary curves: the prescribed modal mixtures (a1-a4).
+    for mkey, mname in _INTERNAL_MODES:
+        r_d = float(modes[mkey]["dry_radius_um"])
+        B = _mode_mixed_B(config, mkey, rh)
+        w = kohler_wet_radius_um(r_d, B, rh, T)
+        ax1.plot(rh, w / r_d, color=MODE_COLOR[mname], label=mname)
+        ax2.plot(rh, w, color=MODE_COLOR[mname], label=mname)
+    # Faint pure end-member reference (growth factor at an accumulation-size r_d).
+    for tkey, fam in [("SU", "Sulfate"), ("SS", "Sea Salt"), ("BC", "Black Carbon")]:
+        w = kohler_wet_radius_um(0.055, _species_B(config, tkey, rh), rh, T)
+        ax1.plot(rh, w / 0.055, color=SPECIES_COLOR[fam], lw=1.0, ls=(0, (4, 2)),
+                 alpha=0.55, label="%s (Pure)" % fam)
     ax1.set_xlabel("Relative Humidity"); ax1.set_ylabel("$r_w / r_d$")
-    ax1.set_title("Growth Factor"); ax1.legend(frameon=True)
-    for label, rd, B, c in [("Sulfate", 0.055, 0.6, SPECIES_COLOR["Sulfate"]),
-                           ("Dust", 0.73, 0.14, SPECIES_COLOR["Dust"]),
-                           ("Sea Salt", 1.0, 1.2, SPECIES_COLOR["Sea Salt"])]:
-        w = kohler_wet_radius_um(rd, np.full_like(rh, B), rh, T)
-        ax2.plot(rh, w, color=c, label=label)
-    ax2.set_yscale("log")
-    _logticks(ax2, yticks=[0.1, 1])
+    ax1.set_title("Growth Factor")
+    ax1.legend(frameon=True, fontsize=8, ncol=2, loc="upper left")
+    ax2.set_yscale("log"); _logticks(ax2, yticks=[0.01, 0.1, 1])
     ax2.set_xlabel("Relative Humidity"); ax2.set_ylabel("$r_w$ (μm)")
-    ax2.set_title("Wet Radius"); ax2.legend(frameon=True)
-    fig.suptitle("Köhler Wet Radius", fontweight="bold")
+    ax2.set_title("Wet Radius"); ax2.legend(frameon=True, fontsize=8, title="Mode")
+    _draw_mode_pies(fig, pie_axes, config)
+    fig.suptitle("Köhler Growth of the Prescribed Modal Mixtures", fontweight="bold")
     save(fig, outdir, "kohler_growth")
 
 
@@ -320,7 +398,10 @@ def fig_spectral_radiative(outdir, optics_dir, config):
         ("du2", "Dust", SPECIES_COLOR["Dust"], "--", True),
         ("ss3", "Sea Salt", SPECIES_COLOR["Sea Salt"], "--", True),
     ]
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4.4), constrained_layout=True)
+    fig = plt.figure(figsize=(14, 6.6))
+    gs = fig.add_gridspec(2, 12, height_ratios=[3.0, 1.3], hspace=0.5, wspace=1.4)
+    ax1 = fig.add_subplot(gs[0, 0:4]); ax2 = fig.add_subplot(gs[0, 4:8]); ax3 = fig.add_subplot(gs[0, 8:12])
+    pie_axes = [fig.add_subplot(gs[1, 3 * i:3 * i + 3]) for i in range(4)]
     rh = np.array([_REP_RH], dtype=np.float32)
     temp = np.array([283.0], dtype=np.float32)
     for key, label, color, lsty, external in comps:
@@ -363,6 +444,7 @@ def fig_spectral_radiative(outdir, optics_dir, config):
     ax3.text(0.985, 0.96, "LW", transform=ax3.transAxes, ha="right", va="top",
              color="0.45", fontsize=10, fontweight="bold")
     ax1.legend(frameon=True, loc="lower left", title="Modes (Solid) / Species (Dashed)")
+    _draw_mode_pies(fig, pie_axes, config)
     fig.suptitle("Spectral Radiative Properties (RH = 70%, 283 K)", fontweight="bold")
     save(fig, outdir, "spectral_radiative_properties")
 
@@ -401,7 +483,11 @@ def fig_hydration_radiative(outdir, optics_dir, config):
     temp = 283.0
     comps = [("a1", MODE_COLOR["Accumulation"]), ("a2", MODE_COLOR["Aitken"]),
              ("a3", MODE_COLOR["Coarse"]), ("a4", MODE_COLOR["Primary Carbon"])]
-    fig, ((axU, axE), (axS, axG)) = plt.subplots(2, 2, figsize=(11, 8.4), constrained_layout=True)
+    fig = plt.figure(figsize=(11, 10.2))
+    gs = fig.add_gridspec(3, 4, height_ratios=[3.0, 3.0, 1.35], hspace=0.33, wspace=0.5)
+    axU = fig.add_subplot(gs[0, 0:2]); axE = fig.add_subplot(gs[0, 2:4])
+    axS = fig.add_subplot(gs[1, 0:2]); axG = fig.add_subplot(gs[1, 2:4])
+    pie_axes = [fig.add_subplot(gs[2, i]) for i in range(4)]
     for key, color in comps:
         species = _mode_species(config, "MAM4", key)
         info = _species_info(config, species)
@@ -423,6 +509,7 @@ def fig_hydration_radiative(outdir, optics_dir, config):
     axS.set_ylabel("$\\omega_0$"); axS.set_title("Single-Scattering Albedo"); axS.set_ylim(0, 1.02)
     axG.set_ylabel("$g$"); axG.set_title("Asymmetry"); axG.set_ylim(0, 1.02)
     axU.legend(frameon=True, title="Mode")
+    _draw_mode_pies(fig, pie_axes, config)
     fig.suptitle("Hydration Response at 0.55 μm", fontweight="bold")
     save(fig, outdir, "hydration_radiative")
 
@@ -761,8 +848,8 @@ def main(argv=None):
 
     print("figures -> %s" % args.outdir)
     fig_size_distributions(args.outdir, config)
-    fig_hygroscopicity(args.outdir)
-    fig_kohler(args.outdir)
+    fig_hygroscopicity(args.outdir, config)
+    fig_kohler(args.outdir, config)
     fig_refractive_mixing(args.outdir)
     fig_mie_efficiency(args.outdir)
     fig_mode_integrated(args.outdir, args.optics_dir)
