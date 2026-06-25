@@ -113,7 +113,7 @@ def _draw_mode_pies(fig, pie_axes, config, modes=_INTERNAL_MODES,
         fams = [f for f in _PIE_FAMILY_ORDER if f in comp]
         ax.pie([comp[f] for f in fams], colors=[SPECIES_COLOR[f] for f in fams],
                startangle=90, counterclock=False,
-               wedgeprops=dict(edgecolor="white", linewidth=0.6))
+               wedgeprops=dict(linewidth=0, edgecolor="none"))
         ax.set_title(mname, fontsize=10, pad=1)
         ax.set_aspect("equal")
         seen += [f for f in fams if f not in seen]
